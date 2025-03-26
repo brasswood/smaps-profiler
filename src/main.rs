@@ -7,8 +7,12 @@
  * You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use procfs;
+use procfs::process::{self, Process};
+use procfs::ProcResult;
 use clap::Parser;
+use regex;
+use std::collections::HashMap;
+use std::hash::RandomState;
 
 #[derive(Parser)]
 #[command(version, about = "Reports process stack, heap, text, and data memory usage.", long_about = None)]
@@ -29,5 +33,27 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
+
     println!("Hello, world!");
+}
+
+fn get_processes(regex: Option<regex::Regex>, match_children: bool) -> ProcResult<Vec<Process>> {
+    let all_processes = process::all_processes()?;
+    let Some(regex) = regex else {
+        return all_processes.collect();
+    };
+    struct ProcNode { process: Process, children: Vec<i32> }
+    let mut proc_tree: Vec<ProcNode> = all_processes.map(
+        |p| ProcResult::Ok(ProcNode { process: p?, children: vec![] })
+    ).collect::<ProcResult<Vec<_>>>()?;
+    let kv_pairs = (&proc_tree).into_iter().enumerate().map(|(i, proc_node)| (proc_node.process.pid(), i));
+    let proc_map: HashMap<_, _, RandomState> = HashMap::from_iter(kv_pairs);
+    for idx in 0..proc_tree.len() {
+        let proc_node = &proc_tree[idx];
+        let pid = proc_node.process.pid();
+        let ppid = proc_node.process.stat()?.ppid;
+        let parent_idx = proc_map[&ppid];
+        proc_tree[parent_idx].children.push(pid);
+    }
+    return Ok(vec![]);
 }
