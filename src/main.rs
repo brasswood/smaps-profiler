@@ -43,9 +43,9 @@ fn get_processes(regex: Option<regex::Regex>, match_children: bool) -> ProcResul
         return all_processes.collect();
     };
     struct ProcNode { process: Process, children: Vec<i32> }
-    let mut proc_tree: Vec<ProcNode> = all_processes.map(
+    let mut proc_tree = all_processes.map(
         |p| ProcResult::Ok(ProcNode { process: p?, children: vec![] })
-    ).collect::<ProcResult<Vec<_>>>()?;
+    ).collect::<ProcResult<Vec<ProcNode>>>()?;
     let kv_pairs = (&proc_tree).into_iter().enumerate().map(|(i, proc_node)| (proc_node.process.pid(), i));
     let proc_map: HashMap<_, _, RandomState> = HashMap::from_iter(kv_pairs);
     for idx in 0..proc_tree.len() {
