@@ -2,6 +2,8 @@
 name = "untitled-smaps-poller"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0-only"
+license-file = "LICENSE"
 
 [dependencies]
 clap = { version = "4.5.32", features = ["derive"] }

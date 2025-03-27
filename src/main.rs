@@ -1,13 +1,19 @@
 /* Copyright 2025 Andrew Riachi
  *
- * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3 only.
  * 
- * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
  * 
- * You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use procfs::process::{self, Process};
+use procfs::process::{self, Process, MMapPath::*, MMPermissions};
 use procfs::ProcResult;
 use clap::Parser;
 use regex;
@@ -32,16 +38,45 @@ struct Args {
 }
 
 struct ProcNode { pid: i32, ppid: i32, cmdline: String, process: Process, children: Vec<usize> }
-
+// I might want a new type that has all the same information as ProcNode, but also with smaps.
+// function delegation for trait impls has been proposed in rust-lang/rfcs/#3530.
+// property delegation as in Kotlin would be nice.
+struct ProcListing { pid: i32, ppid: i32, cmdline: String, memory_ext: MemoryExt }
+struct MemoryExt { stack_pss: u64, heap_pss: u64, bin_text_pss: u64, lib_text_pss: u64, bin_data_pss: u64, lib_data_pss: u64, anon_map_pss: u64 }
 fn main() {
+    // Design: incrementally gather the data we need from each process
+    // get_processes: () -> [{pid, ppid, cmdline, Process}]
+    // get_smaps: [{pid, ppid, cmdline, Process}] -> [{pid, ppid, cmdline, memory_ext}], where the
+    // open Process is used by get_smaps to get memory_ext, then dropped in the resulting struct.
+    //
+    // This isn't super extensible, e.g., if I want to make it so the user can pick which columns
+    // are shown, then there has to at least be a type for every possible combination of
+    // columns, and then possibly a unique function for every possible type that could be used as
+    // input. But I get some special guarantee from the typechecker here. For instance, one way to
+    // make the struct more flexible with the user choice of columns is to have a sturct
+    // {pid, ppid, cmdline, Option<memory_ext>, Option<other_field>, etc...}
+    // We lose a guarantee from this: that in a list of these structs, either memory_ext is defined
+    // for all of the elements or it's defined for none of them. The first type does provide that
+    // guarantee, though. Another possibility is to make get_smaps return [memory_ext] instead, but
+    // then there's no inherent guarantee from the signature alone that the length of that list is
+    // the same as the length of the input list. At least, I know of no way to do this in Rust.
     let args = Args::parse();
     let duration = Duration::try_from_secs_f64(args.interval).unwrap();
     let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
+    /*
     loop {
         let procs = get_processes(&re, args.match_children).unwrap();
         print_processes(&procs);
         thread::sleep(duration);
     }
+    */
+    let procs = get_processes(&re, args.match_children).unwrap();
+    let Some(proc) = procs.get(0) else {
+        println!("no processes");
+        return;
+    };
+    let smaps = proc.process.smaps().unwrap();
+    println!("{:?}", smaps);
 }
 
 /// Returns the list of matching `ProcNode`s.
@@ -110,6 +145,82 @@ fn get_processes(regex: &Option<regex::Regex>, match_children: bool) -> ProcResu
         })
         .collect();
     return Ok(result);
+}
+
+
+fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
+    processes.into_iter().map(|proc_node| {
+        let process = proc_node.process;
+        let maps = process.smaps()?.0;
+        let mut memory_ext = MemoryExt { stack_pss: 0, heap_pss: 0, bin_text_pss: 0, lib_text_pss: 0, bin_data_pss: 0, lib_data_pss: 0, anon_map_pss: 0 };
+        for map in maps {
+            let path = &map.pathname;
+            match path {
+                Path(pathbuf) => {
+                    let exe = process.exe()?;
+                    let Some(pss) = map.extension.map.get("Pss") else { 
+                        eprintln!("WARNING: PSS field not defined on file-backed map. Assuming 0.\n\
+                            The map is: {:?}", map);
+                        continue;
+                    };
+                    let is_self = exe == *pathbuf;
+                    let perms = map.perms;
+                    let is_x = perms.contains(MMPermissions::EXECUTE);
+                    let field = match (is_self, is_x) {
+                        (true, true) => &mut memory_ext.bin_text_pss,
+                        (true, false) => &mut memory_ext.bin_data_pss,
+                        (false, true) => &mut memory_ext.lib_text_pss,
+                        (false, false) => &mut memory_ext.lib_data_pss,
+                    };
+                    *field += pss;
+                },
+                Heap => {
+                    if let Some(pss) = map.extension.map.get("Pss") {
+                        memory_ext.heap_pss += pss;
+                    } else {
+                        eprintln!("WARNING: PSS field not defined on heap. Assuming 0.\n\
+                                The map is: {:?}", map);
+                    }
+                },
+                Stack => {
+                    if let Some(pss) = map.extension.map.get("Pss") {
+                        memory_ext.stack_pss += pss;
+                    } else {
+                        eprintln!("WARNING: PSS field not defined on stack. Assuming 0.\n\
+                                The map is: {:?}", map);
+                    }
+                },
+                Anonymous => {
+                    if let Some(pss) = map.extension.map.get("Pss") {
+                        memory_ext.anon_map_pss += pss;
+                    } else {
+                        eprintln!("WARNING: PSS field not defined on anonymous map. Assuming 0.\n\
+                                The map is: {:?}", map);
+                    }
+                },
+                _ => {
+                    let Some(&rss) = map.extension.map.get("Rss") else {
+                        eprintln!("WARNING: I don't know how to classify this map and it doesn't have a RSS field.\n\
+                            The map is: {:?}", map);
+                        continue;
+                    };
+                    if rss == 0 {
+                        eprintln!("WARNING: I don't know how to classify this map, but at least its RSS is 0.\n\
+                            The map is: {:?}", map);
+                    } else {
+                        panic!("FATAL: I don't know how to classify this map and its RSS is not 0.\n\
+                            The map is: {:?}", map);
+                    }
+                },
+            } // end match
+        } // end for map in maps
+        return Ok(ProcListing {
+            pid: proc_node.pid,
+            ppid: proc_node.ppid,
+            cmdline: proc_node.cmdline,
+            memory_ext,
+        });
+    }).collect()
 }
 
 fn print_processes(processes: &Vec<ProcNode>) {
