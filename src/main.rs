@@ -15,6 +15,7 @@
 
 use procfs::process::{self, Process, MMapPath::*, MMPermissions};
 use procfs::ProcResult;
+use procfs::ProcError::PermissionDenied;
 use clap::Parser;
 use regex;
 use std::collections::{HashMap, HashSet};
@@ -35,6 +36,11 @@ struct Args {
     ///Refresh interval in seconds
     #[arg(short, long, default_value_t = 1.0_f64)]
     interval: f64,
+
+    ///Fail if permission is denied to read a process's info. Default behavior is to skip the
+    ///process and continue running.
+    #[arg(short, long)]
+    fail_on_noperm: bool
 }
 
 struct ProcNode { pid: i32, ppid: i32, cmdline: String, process: Process, children: Vec<usize> }
@@ -64,10 +70,20 @@ fn main() {
     let duration = Duration::try_from_secs_f64(args.interval).unwrap();
     let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
     loop {
-        let procs = get_processes(&re, args.match_children).unwrap();
-        let procs = get_smaps(procs).unwrap();
+        let procs = get_processes(&re, args.match_children, args.fail_on_noperm).unwrap();
+        let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
         print_processes(&procs);
         thread::sleep(duration);
+    }
+}
+
+fn check_noperm<T>(result: ProcResult<T>, fail_on_noperm: bool) -> Option<ProcResult<T>> {
+    if fail_on_noperm {
+        Some(result)
+    } else if let Err(PermissionDenied(_)) = result {
+        None
+    } else {
+        Some(result)
     }
 }
 
@@ -77,21 +93,31 @@ fn main() {
 /// checked against `regex`. If there's a match, it will be included in the list.
 /// If `match_children` is `true`, then all children of the matched processes will
 /// also be included, whether their cmdline matches or not.
-fn get_processes(regex: &Option<regex::Regex>, match_children: bool) -> ProcResult<Vec<ProcNode>> {
+fn get_processes(regex: &Option<regex::Regex>, match_children: bool, fail_on_noperm: bool) -> ProcResult<Vec<ProcNode>> {
     let all_processes = process::all_processes()?;
-    let mut proc_tree = all_processes.map(|proc_result| {
-        let process = proc_result?;
-        let stat = process.stat()?;
-        let pid = stat.pid;
-        let ppid = stat.ppid;
-        let cmdline = process.cmdline()?.into_iter().fold("".to_owned(), |acc, val| acc + " " + &val); // TODO: why is this a Vec?
-        ProcResult::Ok(ProcNode { 
+    let mut proc_tree = all_processes.filter_map(|proc_result| {
+        let combined_proc_info_result = proc_result.and_then(|process| {
+            process.stat().and_then(|stat| {
+            let pid = stat.pid;
+            let ppid = stat.ppid;
+            process.cmdline().and_then(|c| {
+            let cmdline = c.into_iter().fold("".to_owned(), |acc, val| acc + " " + &val); // TODO: why is this a Vec?
+            Ok((pid, ppid, cmdline, process))
+            })})}); // This should probably be illegal
+
+        let (pid, ppid, cmdline, process) = match check_noperm(combined_proc_info_result, fail_on_noperm) {
+            Some(Ok(tuple)) => tuple,
+            Some(Err(e)) => return Some(Err(e)),
+            None => return None,
+        };
+
+        Some(ProcResult::Ok(ProcNode { 
             pid,
             ppid, 
             cmdline,
             process,
             children: vec![] 
-        })
+        }))
     }).collect::<ProcResult<Vec<ProcNode>>>()?;
     let Some(regex) = regex else {
         return Ok(proc_tree);
@@ -139,11 +165,15 @@ fn get_processes(regex: &Option<regex::Regex>, match_children: bool) -> ProcResu
     return Ok(result);
 }
 
-
-fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
-    processes.into_iter().map(|proc_node| {
+fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<ProcListing>> {
+    processes.into_iter().filter_map(|proc_node| {
         let ProcNode { pid, ppid, cmdline, process, .. } = proc_node;
-        let maps = process.smaps()?.0;
+        let maps_result = check_noperm(process.smaps(), fail_on_noperm);
+        let maps = match maps_result {
+            Some(Ok(maps)) => maps,
+            Some(Err(e)) => return Some(Err(e)),
+            None => return None,
+        };
         let mut memory_ext = MemoryExt { stack_pss: 0, heap_pss: 0, bin_text_pss: 0, lib_text_pss: 0, bin_data_pss: 0, lib_data_pss: 0, anon_map_pss: 0 };
         for map in maps {
             let path = &map.pathname;
@@ -171,7 +201,12 @@ fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
             };
             match path {
                 Path(pathbuf) => {
-                    let exe = process.exe()?;
+                    let exe_result = check_noperm(process.exe(), fail_on_noperm);
+                    let exe = match exe_result {
+                        Some(Ok(exe)) => exe,
+                        Some(Err(e)) => return Some(Err(e)),
+                        None => return None,
+                    };
                     let pss = get_pss_or_warn("file-backed map");
                     let is_self = exe == *pathbuf;
                     let perms = map.perms;
@@ -206,7 +241,7 @@ fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
                 },
             } // end match
         } // end for map in maps
-        return Ok(ProcListing { pid, ppid, cmdline, memory_ext });
+        return Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }));
     }).collect()
 }
 
