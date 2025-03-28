@@ -142,7 +142,7 @@ fn get_processes(regex: &Option<regex::Regex>, match_children: bool) -> ProcResu
 
 fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
     processes.into_iter().map(|proc_node| {
-        let process = proc_node.process;
+        let ProcNode { pid, ppid, cmdline, process, .. } = proc_node;
         let maps = process.smaps()?.0;
         let mut memory_ext = MemoryExt { stack_pss: 0, heap_pss: 0, bin_text_pss: 0, lib_text_pss: 0, bin_data_pss: 0, lib_data_pss: 0, anon_map_pss: 0 };
         for map in maps {
@@ -153,16 +153,19 @@ fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
                     pss
                 } else if let Some(&rss) = map.extension.map.get("Rss") {
                     if rss == 0 {
-                        eprintln!("WARNING: PSS field not defined on {}, but RSS is defined and is 0. Assuming 0.\n\
-                            The map is: {:?}", map_type, map);
+                        eprintln!("WARNING: PSS field not defined on {0}, but RSS is defined and is 0. Assuming 0.\
+                            \n  The process is {2} {3}\
+                            \n  The map is {1:?}", map_type, map, pid, cmdline);
                         0
                     } else {
-                        panic!("FATAL: PSS field not defined on {}, and its RSS is not 0.\n\
-                            The map is: {:?}", map_type, map);
+                        panic!("FATAL: PSS field not defined on {0}, and its RSS is not 0.\
+                            \n  The process is {2} {3}\
+                            \n  The map is {1:?}", map_type, map, pid, cmdline);
                     }
                 } else {
-                    eprintln!("WARNING: PSS field not defined on {}, but neither is RSS. Assuming 0.\n\
-                        The map is: {:?}", map_type, map);
+                    eprintln!("WARNING: PSS field not defined on {0}, but neither is RSS. Assuming 0.\
+                        \n  The process is {2} {3}\
+                        \n  The map is {1:?}", map_type, map, pid, cmdline);
                     0
                 }
             };
@@ -186,26 +189,24 @@ fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
                 Anonymous => memory_ext.anon_map_pss += get_pss_or_warn("anonymous map"),
                 _ => {
                     let Some(&rss) = map.extension.map.get("Rss") else {
-                        eprintln!("WARNING: I don't know how to classify this map, and it doesn't have a RSS field.\n\
-                            The map is: {:?}", map);
+                        eprintln!("WARNING: I don't know how to classify this map, and it doesn't have a RSS field.\
+                            \n  The process is {1} {2}\
+                            \n  The map is {0:?}", map, pid, cmdline);
                         continue;
                     };
                     if rss == 0 {
-                        eprintln!("WARNING: I don't know how to classify this map, but at least its RSS is 0.\n\
-                            The map is: {:?}", map);
+                        eprintln!("WARNING: I don't know how to classify this map, but at least its RSS is 0.\
+                            \n  The process is {1} {2}\
+                            \n  The map is {0:?}", map, pid, cmdline);
                     } else {
-                        panic!("FATAL: I don't know how to classify this map, and its RSS is not 0.\n\
-                            The map is: {:?}", map);
+                        panic!("FATAL: I don't know how to classify this map, and its RSS is not 0.\
+                            \n  The process is {1} {2}\
+                            \n  The map is {0:?}", map, pid, cmdline);
                     }
                 },
             } // end match
         } // end for map in maps
-        return Ok(ProcListing {
-            pid: proc_node.pid,
-            ppid: proc_node.ppid,
-            cmdline: proc_node.cmdline,
-            memory_ext,
-        });
+        return Ok(ProcListing { pid, ppid, cmdline, memory_ext });
     }).collect()
 }
 
