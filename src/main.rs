@@ -15,7 +15,7 @@
 
 use procfs::process::{self, Process, MMapPath::*, MMPermissions};
 use procfs::ProcResult;
-use procfs::ProcError::PermissionDenied;
+use procfs::ProcError::{PermissionDenied, NotFound};
 use clap::Parser;
 use regex;
 use std::collections::{HashMap, HashSet};
@@ -77,10 +77,16 @@ fn main() {
     }
 }
 
-fn check_noperm<T>(result: ProcResult<T>, fail_on_noperm: bool) -> Option<ProcResult<T>> {
-    if fail_on_noperm {
-        Some(result)
-    } else if let Err(PermissionDenied(_)) = result {
+fn filter_errors<T>(result: ProcResult<T>, fail_on_noperm: bool) -> Option<ProcResult<T>> {
+    if let Err(PermissionDenied(_)) = result {
+        if fail_on_noperm {
+            Some(result)
+        } else {
+            None
+        }
+    } else if let Err(NotFound(Some(pathbuf))) = result {
+        eprintln!("WARNING: \"{}\" not found. The process may have exited before I could get its details. Ignoring.",
+            pathbuf.display());
         None
     } else {
         Some(result)
@@ -105,7 +111,7 @@ fn get_processes(regex: &Option<regex::Regex>, match_children: bool, fail_on_nop
             Ok((pid, ppid, cmdline, process))
             })})}); // This should probably be illegal
 
-        let (pid, ppid, cmdline, process) = match check_noperm(combined_proc_info_result, fail_on_noperm) {
+        let (pid, ppid, cmdline, process) = match filter_errors(combined_proc_info_result, fail_on_noperm) {
             Some(Ok(tuple)) => tuple,
             Some(Err(e)) => return Some(Err(e)),
             None => return None,
@@ -168,7 +174,7 @@ fn get_processes(regex: &Option<regex::Regex>, match_children: bool, fail_on_nop
 fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<ProcListing>> {
     processes.into_iter().filter_map(|proc_node| {
         let ProcNode { pid, ppid, cmdline, process, .. } = proc_node;
-        let maps_result = check_noperm(process.smaps(), fail_on_noperm);
+        let maps_result = filter_errors(process.smaps(), fail_on_noperm);
         let maps = match maps_result {
             Some(Ok(maps)) => maps,
             Some(Err(e)) => return Some(Err(e)),
@@ -201,7 +207,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
             };
             match path {
                 Path(pathbuf) => {
-                    let exe_result = check_noperm(process.exe(), fail_on_noperm);
+                    let exe_result = filter_errors(process.exe(), fail_on_noperm);
                     let exe = match exe_result {
                         Some(Ok(exe)) => exe,
                         Some(Err(e)) => return Some(Err(e)),
