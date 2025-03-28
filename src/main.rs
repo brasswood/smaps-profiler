@@ -63,20 +63,12 @@ fn main() {
     let args = Args::parse();
     let duration = Duration::try_from_secs_f64(args.interval).unwrap();
     let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
-    /*
     loop {
         let procs = get_processes(&re, args.match_children).unwrap();
+        let procs = get_smaps(procs).unwrap();
         print_processes(&procs);
         thread::sleep(duration);
     }
-    */
-    let procs = get_processes(&re, args.match_children).unwrap();
-    let Some(proc) = procs.get(0) else {
-        println!("no processes");
-        return;
-    };
-    let smaps = proc.process.smaps().unwrap();
-    println!("{:?}", smaps);
 }
 
 /// Returns the list of matching `ProcNode`s.
@@ -160,7 +152,7 @@ fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
                 if let Some(&pss) = map.extension.map.get("Pss") {
                     pss
                 } else if let Some(&rss) = map.extension.map.get("Rss") {
-                    if (rss == 0) {
+                    if rss == 0 {
                         eprintln!("WARNING: PSS field not defined on {}, but RSS is defined and is 0. Assuming 0.\n\
                             The map is: {:?}", map_type, map);
                         0
@@ -217,9 +209,19 @@ fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
     }).collect()
 }
 
-fn print_processes(processes: &Vec<ProcNode>) {
-    println!("PID\tPPID\tCMD");
-    for proc_node in processes {
-        println!("{}\t{}\t{}", proc_node.pid, proc_node.ppid, proc_node.cmdline);
+fn print_processes(processes: &Vec<ProcListing>) {
+    println!("PID\tSTACK_PSS\tHEAP_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tCMD");
+    for proc_listing in processes {
+        let ProcListing { pid, cmdline, memory_ext, .. } = proc_listing;
+        let MemoryExt { 
+            stack_pss: stack, 
+            heap_pss: heap, 
+            bin_text_pss: bin_text, 
+            lib_text_pss: lib_text, 
+            bin_data_pss: bin_data, 
+            lib_data_pss: lib_data, 
+            anon_map_pss: anon_map 
+        } = memory_ext;
+        println!("{pid}\t{stack}\t{heap}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{cmdline}");
     }
 }
