@@ -155,14 +155,29 @@ fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
         let mut memory_ext = MemoryExt { stack_pss: 0, heap_pss: 0, bin_text_pss: 0, lib_text_pss: 0, bin_data_pss: 0, lib_data_pss: 0, anon_map_pss: 0 };
         for map in maps {
             let path = &map.pathname;
+            // https://users.rust-lang.org/t/lazy-evaluation-in-pattern-matching/127565/2
+            let get_pss_or_warn = |map_type: &str| {
+                if let Some(&pss) = map.extension.map.get("Pss") {
+                    pss
+                } else if let Some(&rss) = map.extension.map.get("Rss") {
+                    if (rss == 0) {
+                        eprintln!("WARNING: PSS field not defined on {}, but RSS is defined and is 0. Assuming 0.\n\
+                            The map is: {:?}", map_type, map);
+                        0
+                    } else {
+                        panic!("FATAL: PSS field not defined on {}, and its RSS is not 0.\n\
+                            The map is: {:?}", map_type, map);
+                    }
+                } else {
+                    eprintln!("WARNING: PSS field not defined on {}, but neither is RSS. Assuming 0.\n\
+                        The map is: {:?}", map_type, map);
+                    0
+                }
+            };
             match path {
                 Path(pathbuf) => {
                     let exe = process.exe()?;
-                    let Some(pss) = map.extension.map.get("Pss") else { 
-                        eprintln!("WARNING: PSS field not defined on file-backed map. Assuming 0.\n\
-                            The map is: {:?}", map);
-                        continue;
-                    };
+                    let pss = get_pss_or_warn("file-backed map");
                     let is_self = exe == *pathbuf;
                     let perms = map.perms;
                     let is_x = perms.contains(MMPermissions::EXECUTE);
@@ -174,33 +189,12 @@ fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
                     };
                     *field += pss;
                 },
-                Heap => {
-                    if let Some(pss) = map.extension.map.get("Pss") {
-                        memory_ext.heap_pss += pss;
-                    } else {
-                        eprintln!("WARNING: PSS field not defined on heap. Assuming 0.\n\
-                                The map is: {:?}", map);
-                    }
-                },
-                Stack => {
-                    if let Some(pss) = map.extension.map.get("Pss") {
-                        memory_ext.stack_pss += pss;
-                    } else {
-                        eprintln!("WARNING: PSS field not defined on stack. Assuming 0.\n\
-                                The map is: {:?}", map);
-                    }
-                },
-                Anonymous => {
-                    if let Some(pss) = map.extension.map.get("Pss") {
-                        memory_ext.anon_map_pss += pss;
-                    } else {
-                        eprintln!("WARNING: PSS field not defined on anonymous map. Assuming 0.\n\
-                                The map is: {:?}", map);
-                    }
-                },
+                Heap => memory_ext.heap_pss += get_pss_or_warn("heap"),
+                Stack => memory_ext.stack_pss += get_pss_or_warn("stack"),
+                Anonymous => memory_ext.anon_map_pss += get_pss_or_warn("anonymous map"),
                 _ => {
                     let Some(&rss) = map.extension.map.get("Rss") else {
-                        eprintln!("WARNING: I don't know how to classify this map and it doesn't have a RSS field.\n\
+                        eprintln!("WARNING: I don't know how to classify this map, and it doesn't have a RSS field.\n\
                             The map is: {:?}", map);
                         continue;
                     };
@@ -208,7 +202,7 @@ fn get_smaps(processes: Vec<ProcNode>) -> ProcResult<Vec<ProcListing>> {
                         eprintln!("WARNING: I don't know how to classify this map, but at least its RSS is 0.\n\
                             The map is: {:?}", map);
                     } else {
-                        panic!("FATAL: I don't know how to classify this map and its RSS is not 0.\n\
+                        panic!("FATAL: I don't know how to classify this map, and its RSS is not 0.\n\
                             The map is: {:?}", map);
                     }
                 },
