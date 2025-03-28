@@ -22,6 +22,8 @@ use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
 use std::thread;
 use std::time::Duration;
+use log::{warn, LevelFilter};
+use env_logger::Builder;
 
 #[derive(Parser)]
 #[command(version, about = "Reports process stack, heap, text, and data memory usage.", long_about = None)]
@@ -40,7 +42,11 @@ struct Args {
     ///Fail if permission is denied to read a process's info. Default behavior is to skip the
     ///process and continue running.
     #[arg(short, long)]
-    fail_on_noperm: bool
+    fail_on_noperm: bool,
+
+    ///Print warnings to stderr
+    #[arg(short = 'w', long)]
+    show_warnings: bool
 }
 
 struct ProcNode { pid: i32, ppid: i32, cmdline: String, process: Process, children: Vec<usize> }
@@ -67,6 +73,11 @@ fn main() {
     // then there's no inherent guarantee from the signature alone that the length of that list is
     // the same as the length of the input list. At least, I know of no way to do this in Rust.
     let args = Args::parse();
+    if args.show_warnings {
+        Builder::from_default_env().filter_level(LevelFilter::Warn).init();
+    } else {
+        env_logger::init();
+    }
     let duration = Duration::try_from_secs_f64(args.interval).unwrap();
     let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
     loop {
@@ -85,7 +96,7 @@ fn filter_errors<T>(result: ProcResult<T>, fail_on_noperm: bool) -> Option<ProcR
             None
         }
     } else if let Err(NotFound(Some(pathbuf))) = result {
-        eprintln!("WARNING: \"{}\" not found. The process may have exited before I could get its details. Ignoring.",
+        warn!("\"{}\" not found. The process may have exited before I could get its details. Ignoring.",
             pathbuf.display());
         None
     } else {
@@ -189,7 +200,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
                     pss
                 } else if let Some(&rss) = map.extension.map.get("Rss") {
                     if rss == 0 {
-                        eprintln!("WARNING: PSS field not defined on {0}, but RSS is defined and is 0. Assuming 0.\
+                        warn!("PSS field not defined on {0}, but RSS is defined and is 0. Assuming 0.\
                             \n  The process is {2} {3}\
                             \n  The map is {1:?}", map_type, map, pid, cmdline);
                         0
@@ -199,7 +210,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
                             \n  The map is {1:?}", map_type, map, pid, cmdline);
                     }
                 } else {
-                    eprintln!("WARNING: PSS field not defined on {0}, but neither is RSS. Assuming 0.\
+                    warn!("PSS field not defined on {0}, but neither is RSS. Assuming 0.\
                         \n  The process is {2} {3}\
                         \n  The map is {1:?}", map_type, map, pid, cmdline);
                     0
@@ -231,13 +242,13 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
                 Vdso => memory_ext.vdso_pss += get_pss_or_warn("vdso"),
                 _ => {
                     let Some(&rss) = map.extension.map.get("Rss") else {
-                        eprintln!("WARNING: I don't know how to classify this map, and it doesn't have a RSS field.\
+                        warn!("I don't know how to classify this map, and it doesn't have a RSS field.\
                             \n  The process is {1} {2}\
                             \n  The map is {0:?}", map, pid, cmdline);
                         continue;
                     };
                     if rss == 0 {
-                        eprintln!("WARNING: I don't know how to classify this map, but at least its RSS is 0.\
+                        warn!("I don't know how to classify this map, but at least its RSS is 0.\
                             \n  The process is {1} {2}\
                             \n  The map is {0:?}", map, pid, cmdline);
                     } else {
