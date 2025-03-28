@@ -48,7 +48,7 @@ struct ProcNode { pid: i32, ppid: i32, cmdline: String, process: Process, childr
 // function delegation for trait impls has been proposed in rust-lang/rfcs/#3530.
 // property delegation as in Kotlin would be nice.
 struct ProcListing { pid: i32, ppid: i32, cmdline: String, memory_ext: MemoryExt }
-struct MemoryExt { stack_pss: u64, heap_pss: u64, bin_text_pss: u64, lib_text_pss: u64, bin_data_pss: u64, lib_data_pss: u64, anon_map_pss: u64 }
+struct MemoryExt { stack_pss: u64, heap_pss: u64, bin_text_pss: u64, lib_text_pss: u64, bin_data_pss: u64, lib_data_pss: u64, anon_map_pss: u64, vdso_pss: u64 }
 fn main() {
     // Design: incrementally gather the data we need from each process
     // get_processes: () -> [{pid, ppid, cmdline, Process}]
@@ -174,7 +174,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
             Some(Err(e)) => return Some(Err(e)),
             None => return None,
         };
-        let mut memory_ext = MemoryExt { stack_pss: 0, heap_pss: 0, bin_text_pss: 0, lib_text_pss: 0, bin_data_pss: 0, lib_data_pss: 0, anon_map_pss: 0 };
+        let mut memory_ext = MemoryExt { stack_pss: 0, heap_pss: 0, bin_text_pss: 0, lib_text_pss: 0, bin_data_pss: 0, lib_data_pss: 0, anon_map_pss: 0, vdso_pss: 0 };
         for map in maps {
             let path = &map.pathname;
             // https://users.rust-lang.org/t/lazy-evaluation-in-pattern-matching/127565/2
@@ -222,6 +222,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
                 Heap => memory_ext.heap_pss += get_pss_or_warn("heap"),
                 Stack => memory_ext.stack_pss += get_pss_or_warn("stack"),
                 Anonymous => memory_ext.anon_map_pss += get_pss_or_warn("anonymous map"),
+                Vdso => memory_ext.vdso_pss += get_pss_or_warn("vdso"),
                 _ => {
                     let Some(&rss) = map.extension.map.get("Rss") else {
                         eprintln!("WARNING: I don't know how to classify this map, and it doesn't have a RSS field.\
@@ -246,7 +247,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
 }
 
 fn print_processes(processes: &Vec<ProcListing>) {
-    println!("PID\tSTACK_PSS\tHEAP_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tCMD");
+    println!("PID\tSTACK_PSS\tHEAP_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tCMD");
     for proc_listing in processes {
         let ProcListing { pid, cmdline, memory_ext, .. } = proc_listing;
         let MemoryExt { 
@@ -256,8 +257,9 @@ fn print_processes(processes: &Vec<ProcListing>) {
             lib_text_pss: lib_text, 
             bin_data_pss: bin_data, 
             lib_data_pss: lib_data, 
-            anon_map_pss: anon_map 
+            anon_map_pss: anon_map,
+            vdso_pss: vdso,
         } = memory_ext;
-        println!("{pid}\t{stack}\t{heap}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{cmdline}");
+        println!("{pid}\t{stack}\t{heap}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{cmdline}");
     }
 }
