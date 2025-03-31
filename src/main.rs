@@ -25,6 +25,8 @@ use std::hash::RandomState;
 use std::thread;
 use std::time::Duration;
 
+// TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
+// compared to smaps_rollup. Gotta figure out why.
 #[derive(Parser)]
 #[command(version, about = "Reports process stack, heap, text, and data memory usage.", long_about = None)]
 struct Args {
@@ -34,6 +36,10 @@ struct Args {
     ///If --regex is given, include children of matched processes, even if they don't match.
     #[arg(short = 'c', long, requires = "regex")]
     match_children: bool,
+
+    ///Match the process for this program.
+    #[arg(short = 's', long, default_value_t = false)]
+    match_self: bool,
 
     ///Refresh interval in seconds
     #[arg(short, long, default_value_t = 1.0_f64)]
@@ -103,7 +109,7 @@ fn main() {
     let duration = Duration::try_from_secs_f64(args.interval).unwrap();
     let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
     loop {
-        let procs = get_processes(&re, args.match_children, args.fail_on_noperm).unwrap();
+        let procs = get_processes(&re, args.match_children, args.match_self, args.fail_on_noperm).unwrap();
         let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
         print_processes(&procs);
         thread::sleep(duration);
@@ -135,38 +141,40 @@ fn filter_errors<T>(result: ProcResult<T>, fail_on_noperm: bool) -> Option<ProcR
 fn get_processes(
     regex: &Option<regex::Regex>,
     match_children: bool,
+    match_self: bool,
     fail_on_noperm: bool,
 ) -> ProcResult<Vec<ProcNode>> {
+    let me = TryInto::<i32>::try_into(std::process::id()).unwrap();
     let all_processes = process::all_processes()?;
     let mut proc_tree = all_processes
         .filter_map(|proc_result| {
-            let combined_proc_info_result = proc_result.and_then(|process| {
+            let result = proc_result.and_then(|process| {
                 process.stat().and_then(|stat| {
                     let pid = stat.pid;
+                    // https://users.rust-lang.org/t/std-id-vs-libc-pid-t-how-to-handle/78281
+                    if !match_self && pid == me {return Ok(None);}
                     let ppid = stat.ppid;
                     process.cmdline().and_then(|c| {
                         let cmdline = c
                             .into_iter()
                             .fold("".to_owned(), |acc, val| acc + " " + &val); // TODO: why is this a Vec?
-                        Ok((pid, ppid, cmdline, process))
+                        Ok(Some(ProcResult::Ok(ProcNode {
+                            pid,
+                            ppid,
+                            cmdline,
+                            process,
+                            children: vec![],
+                        })))
                     })
                 })
             }); // This should probably be illegal
 
-            let (pid, ppid, cmdline, process) =
-                match filter_errors(combined_proc_info_result, fail_on_noperm) {
+            return match filter_errors(result, fail_on_noperm) {
                     Some(Ok(tuple)) => tuple,
-                    Some(Err(e)) => return Some(Err(e)),
-                    None => return None,
-                };
+                    Some(Err(e)) => Some(Err(e)),
+                    None => None,
+            };
 
-            Some(ProcResult::Ok(ProcNode {
-                pid,
-                ppid,
-                cmdline,
-                process,
-                children: vec![],
-            }))
         })
         .collect::<ProcResult<Vec<ProcNode>>>()?;
     let Some(regex) = regex else {
