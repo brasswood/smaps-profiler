@@ -15,6 +15,7 @@
 
 use clap::Parser;
 use env_logger::Builder;
+use gnuplot::Figure;
 use log::{warn, LevelFilter};
 use procfs::process::{self, MMPermissions, MMapPath::*, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
@@ -22,7 +23,8 @@ use procfs::ProcResult;
 use regex;
 use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
-use std::ops::Add;
+use std::iter::Enumerate;
+use std::ops::{Add, RangeInclusive};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -381,7 +383,48 @@ fn sum_memory(processes: &Vec<ProcListing>) -> MemoryExt {
     processes.into_iter().fold(init, |acc, proc_listing| acc + &proc_listing.memory_ext)
 }
 
-fn graph_memory(memory_samples: Vec<MemoryExt>) {
-    // https://github.com/plotters-rs/plotters/blob/master/plotters/examples/area-chart.rs
-    todo!();
+fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
+    if memory_series.is_empty() {
+        println!("Nothing to plot.");
+        return;
+    }
+    let empty_vec = Vec::with_capacity(memory_series.len());
+    let mut stack_series = empty_vec.clone();
+    let mut heap_series = empty_vec.clone();
+    let mut bin_text_series = empty_vec.clone();
+    let mut lib_text_series = empty_vec.clone();
+    let mut bin_data_series = empty_vec.clone();
+    let mut lib_data_series = empty_vec.clone();
+    let mut anon_map_series = empty_vec.clone();
+    let mut vdso_series = empty_vec.clone();
+    for m in memory_series {
+        let mut acc = m.stack_pss;
+        stack_series.push(m.stack_pss);
+        acc += m.heap_pss;
+        heap_series.push(acc);
+        acc += m.bin_text_pss;
+        bin_text_series.push(acc);
+        acc += m.lib_text_pss;
+        lib_text_series.push(acc);
+        acc += m.bin_data_pss;
+        bin_data_series.push(acc);
+        acc += m.lib_data_pss;
+        lib_data_series.push(acc);
+        acc += m.anon_map_pss;
+        anon_map_series.push(acc);
+        acc += m.vdso_pss;
+        vdso_series.push(acc);
+    }
+    let last_series = &vdso_series;
+    let iter = last_series.into_iter().enumerate();
+    let (max_idx, _) = iter.clone().max_by_key(|(i, x)| **x).expect("tried to find maximum of empty series somehow");
+    fn get_median_idx<T: Iterator>(iter: Enumerate<T>, range: RangeInclusive<usize>) -> usize where <T as Iterator>::Item: Ord {
+        let mut v: Vec<_> = iter.skip(*range.start()).take(range.end() - range.start() + 1).collect();
+        // can't use sort_by_key here: https://users.rust-lang.org/t/lifetime-problem-with-sort-unstable-by-key/21748/2
+        v.sort_by(|(_, x1), (_, x2)| x1.cmp(x2));
+        v[v.len()/2].0
+    }
+    let lmedian_idx = if max_idx == 0 {None} else {Some(get_median_idx(iter.clone(), 0..=max_idx))};
+    let rmedian_idx = if max_idx == last_series.len() {None} else {Some(get_median_idx(iter.clone(), max_idx..=last_series.len()))};
+    let mut fg = Figure::new();
 }
