@@ -22,6 +22,8 @@ use procfs::ProcResult;
 use regex;
 use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
+use std::ops::Add;
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
@@ -49,6 +51,10 @@ struct Args {
     ///process and continue running.
     #[arg(short, long)]
     fail_on_noperm: bool,
+
+    ///Save graph as SVG to <FILE>
+    #[arg(short, long)]
+    graph: Option<PathBuf>,
 
     ///Print warnings to stderr
     #[arg(short = 'w', long)]
@@ -81,6 +87,30 @@ struct MemoryExt {
     anon_map_pss: u64,
     vdso_pss: u64,
 }
+impl Add for &MemoryExt {
+    type Output = MemoryExt;
+
+    fn add(self, rhs: &MemoryExt) -> MemoryExt {
+        MemoryExt {
+            stack_pss: self.stack_pss + rhs.stack_pss,
+            heap_pss: self.heap_pss + rhs.heap_pss,
+            bin_text_pss: self.bin_text_pss + rhs.bin_text_pss,
+            lib_text_pss: self.lib_text_pss + rhs.lib_text_pss,
+            bin_data_pss: self.bin_data_pss + rhs.bin_data_pss,
+            lib_data_pss: self.lib_data_pss + rhs.lib_data_pss,
+            anon_map_pss: self.anon_map_pss + rhs.anon_map_pss,
+            vdso_pss: self.vdso_pss + rhs.vdso_pss,
+        }
+    }
+}
+impl Add<&MemoryExt> for MemoryExt {
+    type Output = MemoryExt;
+
+    fn add(self, rhs: &MemoryExt) -> MemoryExt {
+        &self + rhs
+    }
+}
+
 fn main() {
     // Design: incrementally gather the data we need from each process
     // get_processes: () -> [{pid, ppid, cmdline, Process}]
@@ -144,6 +174,7 @@ fn get_processes(
     match_self: bool,
     fail_on_noperm: bool,
 ) -> ProcResult<Vec<ProcNode>> {
+    // https://users.rust-lang.org/t/std-id-vs-libc-pid-t-how-to-handle/78281
     let me = TryInto::<i32>::try_into(std::process::id()).unwrap();
     let all_processes = process::all_processes()?;
     let mut proc_tree = all_processes
@@ -151,7 +182,6 @@ fn get_processes(
             let result = proc_result.and_then(|process| {
                 process.stat().and_then(|stat| {
                     let pid = stat.pid;
-                    // https://users.rust-lang.org/t/std-id-vs-libc-pid-t-how-to-handle/78281
                     if !match_self && pid == me {return Ok(None);}
                     let ppid = stat.ppid;
                     process.cmdline().and_then(|c| {
@@ -335,4 +365,23 @@ fn print_processes(processes: &Vec<ProcListing>) {
         } = memory_ext;
         println!("{pid}\t{stack}\t{heap}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{cmdline}");
     }
+}
+
+fn sum_memory(processes: &Vec<ProcListing>) -> MemoryExt {
+    let init = MemoryExt {
+        stack_pss: 0,
+        heap_pss: 0,
+        bin_text_pss: 0,
+        lib_text_pss: 0,
+        bin_data_pss: 0,
+        lib_data_pss: 0,
+        anon_map_pss: 0,
+        vdso_pss: 0,
+    };
+    processes.into_iter().fold(init, |acc, proc_listing| acc + &proc_listing.memory_ext)
+}
+
+fn graph_memory(memory_samples: Vec<MemoryExt>) {
+    // https://github.com/plotters-rs/plotters/blob/master/plotters/examples/area-chart.rs
+    todo!();
 }
