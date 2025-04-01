@@ -140,11 +140,16 @@ fn main() {
     }
     let duration = Duration::try_from_secs_f64(args.interval).unwrap();
     let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
+    let mut memory_series = Vec::new();
     loop {
         let procs = get_processes(&re, args.match_children, args.match_self, args.fail_on_noperm).unwrap();
         let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
         print_processes(&procs);
+        memory_series.push(sum_memory(&procs));
         thread::sleep(duration);
+    }
+    if let Some(path) = args.graph {
+        graph_memory(memory_series, path);
     }
 }
 
@@ -426,5 +431,16 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     }
     let lmedian_idx = if max_idx == 0 {None} else {Some(get_median_idx(iter.clone(), 0..=max_idx))};
     let rmedian_idx = if max_idx == last_series.len() {None} else {Some(get_median_idx(iter.clone(), max_idx..=last_series.len()))};
+    let xs = Vec::from_iter((0..last_series.len()));
     let mut fg = Figure::new();
+    fg.axes2d()
+        .lines(&xs, stack_series, &[])
+        .lines(&xs, heap_series, &[])
+        .lines(&xs, bin_text_series, &[])
+        .lines(&xs, lib_text_series, &[])
+        .lines(&xs, bin_data_series, &[])
+        .lines(&xs, lib_data_series, &[])
+        .lines(&xs, anon_map_series, &[])
+        .lines(&xs, vdso_series, &[]);
+    fg.show().unwrap();
 }
