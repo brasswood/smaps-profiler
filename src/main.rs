@@ -21,11 +21,16 @@ use procfs::process::{self, MMPermissions, MMapPath::*, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
 use regex;
+use signal_hook::consts::signal::SIGINT;
+use signal_hook::flag as signal_flag;
 use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
+use std::io;
 use std::iter::Enumerate;
 use std::ops::{Add, RangeInclusive};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -113,7 +118,7 @@ impl Add<&MemoryExt> for MemoryExt {
     }
 }
 
-fn main() {
+fn main() -> io::Result<()> {
     // Design: incrementally gather the data we need from each process
     // get_processes: () -> [{pid, ppid, cmdline, Process}]
     // get_smaps: [{pid, ppid, cmdline, Process}] -> [{pid, ppid, cmdline, memory_ext}], where the
@@ -141,7 +146,9 @@ fn main() {
     let duration = Duration::try_from_secs_f64(args.interval).unwrap();
     let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
     let mut memory_series = Vec::new();
-    loop {
+    let term = Arc::new(AtomicBool::new(false));
+    signal_flag::register(SIGINT, Arc::clone(&term))?;
+    while !term.load(Ordering::Relaxed) {
         let procs = get_processes(&re, args.match_children, args.match_self, args.fail_on_noperm).unwrap();
         let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
         print_processes(&procs);
@@ -151,6 +158,7 @@ fn main() {
     if let Some(path) = args.graph {
         graph_memory(memory_series, path);
     }
+    Ok(())
 }
 
 fn filter_errors<T>(result: ProcResult<T>, fail_on_noperm: bool) -> Option<ProcResult<T>> {
@@ -422,7 +430,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     }
     let last_series = &vdso_series;
     let iter = last_series.into_iter().enumerate();
-    let (max_idx, _) = iter.clone().max_by_key(|(i, x)| **x).expect("tried to find maximum of empty series somehow");
+    let (max_idx, _) = iter.clone().max_by_key(|(_, x)| **x).expect("tried to find maximum of empty series somehow");
     fn get_median_idx<T: Iterator>(iter: Enumerate<T>, range: RangeInclusive<usize>) -> usize where <T as Iterator>::Item: Ord {
         let mut v: Vec<_> = iter.skip(*range.start()).take(range.end() - range.start() + 1).collect();
         // can't use sort_by_key here: https://users.rust-lang.org/t/lifetime-problem-with-sort-unstable-by-key/21748/2
@@ -431,7 +439,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     }
     let lmedian_idx = if max_idx == 0 {None} else {Some(get_median_idx(iter.clone(), 0..=max_idx))};
     let rmedian_idx = if max_idx == last_series.len() {None} else {Some(get_median_idx(iter.clone(), max_idx..=last_series.len()))};
-    let xs = Vec::from_iter((0..last_series.len()));
+    let xs = Vec::from_iter(0..last_series.len());
     let mut fg = Figure::new();
     fg.axes2d()
         .lines(&xs, stack_series, &[])
