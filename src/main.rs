@@ -15,8 +15,8 @@
 
 use clap::Parser;
 use env_logger::Builder;
+use gnuplot::{AxesCommon, Figure, Coordinate::*, DashType::*, LegendOption::*, PlotOption::*, AutoOption::*};
 use log::{warn, LevelFilter};
-use plotters::prelude::*;
 use procfs::process::{self, MMPermissions, MMapPath::*, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
@@ -442,50 +442,34 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     let xs = Vec::from_iter(0..last_series.len());
     let to_kib = |val: u64| (val as f32)/1024.0;
     let to_kib_vec = |series: &Vec<u64>| series.into_iter().map(|&val| to_kib(val)).collect::<Vec<_>>();
-    // https://github.com/plotters-rs/plotters/blob/master/plotters/examples/area-chart.rs
-    let root = SVGBackend::new(out.to_str().expect("graph path was not valid unicode"), (1024, 768)).into_drawing_area();
-    root.fill(&WHITE).unwrap();
-    let x_len = ((last_series.len()-1) * 4) / 3; // hack to make legend appear
-                                                               // outside of chart area :(
-    let mut chart = ChartBuilder::on(&root)
-        .set_label_area_size(LabelAreaPosition::Left, 60)
-        .set_label_area_size(LabelAreaPosition::Bottom, 60)
-        .build_cartesian_2d(0..x_len, 0.0..(to_kib(last_series[max_idx])*1.02))
-        .unwrap();
-    chart
-        .configure_mesh()
-        .disable_x_mesh()
-        .y_desc("Total Proportional Set Size (KiB)")
-        .x_desc("Time (s)")
-        .draw()
-        .unwrap();
-    let mut palette_idx = 0;
+
+    let mut fg = Figure::new();
+    let axes = fg.axes2d();
+    let x_len = (last_series.len()-1) as f64 / 0.75; // hack to make legend appear outside of chart area :(
+    axes.set_x_range(Fix(0.0), Fix(x_len))
+        .set_y_ticks(Some((Auto, 5)), &[], &[])
+        .set_y_grid(true)
+        .set_y_minor_grid(true)
+        .set_grid_options(false, &[LineStyle(Solid)]) // LineStyle seems to be getting ignored
+        .set_minor_grid_options(&[LineStyle(Solid)])
+        .set_legend(Graph(1.0), Graph(1.0), &[Invert], &[])
+        .set_x_label("Time (s)", &[])
+        .set_y_label("Total Proportional Set Size (KiB)", &[]);
     let first_series = vec![0.0; last_series.len()];
-    let mut prev_series = &first_series;
+    let mut prev_series = first_series;
     let mut draw_series = |series: &Vec<u64>, label: &str| {
-        let color = Palette99::pick(palette_idx);
         let series = to_kib_vec(series);
-        chart.draw_series(
-            LineSeries::new(series.into_iter().enumerate(), color.filled())
-        )
-            .unwrap()
-            .label(label)
-            .legend(move |(x, y)| Rectangle::new([(x, y - 5), (x + 10, y + 5)], color.filled()));
-        chart.draw_series(std::iter::once(Polygon::new(
-            prev_series.clone().into_iter().enumerate().chain(series.clone().into_iter().enumerate()).collect::<Vec<_>>(),
-            color.mix(0.7).filled(),
-        ))).unwrap();
-        palette_idx += 1;
-        prev_series = &series;
+        axes.fill_between(&xs, &prev_series, &series, &[Caption(label), FillAlpha(0.7)]);
+        prev_series = series;
     };
-    draw_series(&vdso_series, "VDSO");
-    draw_series(&anon_map_series, "Anonymous Mappings");
-    draw_series(&lib_data_series, "Library Data");
-    draw_series(&bin_data_series, "Binary Data");
-    draw_series(&lib_text_series, "Library Text");
-    draw_series(&bin_text_series, "Binary Text");
-    draw_series(&heap_series, "Heap");
+
     draw_series(&stack_series, "Stack");
-    chart.configure_series_labels().position(SeriesLabelPosition::UpperRight).draw().unwrap();
-    root.present().expect(&format!("Unable to write graph to {}.", out.display()));
+    draw_series(&heap_series, "Heap");
+    draw_series(&bin_text_series, "Binary Text");
+    draw_series(&lib_text_series, "Library Text");
+    draw_series(&bin_data_series, "Binary Data");
+    draw_series(&lib_data_series, "Library Data");
+    draw_series(&anon_map_series, "Anonymous Mappings");
+    draw_series(&vdso_series, "VDSO");
+    fg.save_to_svg(out.as_path(), 1024, 768).unwrap();
 }
