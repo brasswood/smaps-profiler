@@ -445,10 +445,12 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     // https://github.com/plotters-rs/plotters/blob/master/plotters/examples/area-chart.rs
     let root = SVGBackend::new(out.to_str().expect("graph path was not valid unicode"), (1024, 768)).into_drawing_area();
     root.fill(&WHITE).unwrap();
+    let x_len = ((last_series.len()-1) * 4) / 3; // hack to make legend appear
+                                                               // outside of chart area :(
     let mut chart = ChartBuilder::on(&root)
         .set_label_area_size(LabelAreaPosition::Left, 60)
         .set_label_area_size(LabelAreaPosition::Bottom, 60)
-        .build_cartesian_2d(0..last_series.len(), 0.0..(to_kib(last_series[max_idx])*1.02))
+        .build_cartesian_2d(0..x_len, 0.0..(to_kib(last_series[max_idx])*1.02))
         .unwrap();
     chart
         .configure_mesh()
@@ -459,7 +461,8 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         .unwrap();
     let mut palette_idx = 0;
     let mut draw_series = |series: &Vec<u64>, label: &str| {
-        chart.draw_series(AreaSeries::new(series.into_iter().map(|&v| to_kib(v)).enumerate(), 0.0, Palette99::pick(palette_idx))).unwrap().label(label);
+        let color = Palette99::pick(palette_idx);
+        chart.draw_series(AreaSeries::new(series.into_iter().map(|&v| to_kib(v)).enumerate(), 0.0, color.filled())).unwrap().label(label).legend(move |(x, y)| Rectangle::new([(x, y - 5), (x + 10, y + 5)], color.filled()));
         palette_idx += 1;
     };
     draw_series(&vdso_series, "VDSO");
@@ -470,5 +473,6 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     draw_series(&bin_text_series, "Binary Text");
     draw_series(&heap_series, "Heap");
     draw_series(&stack_series, "Stack");
+    chart.configure_series_labels().position(SeriesLabelPosition::UpperRight).draw().unwrap();
     root.present().expect(&format!("Unable to write graph to {}.", out.display()));
 }
