@@ -441,7 +441,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     let rmedian_idx = if max_idx == last_series.len() {None} else {Some(get_median_idx(iter.clone(), max_idx..=last_series.len()))};
     let xs = Vec::from_iter(0..last_series.len());
     let to_kib = |val: u64| (val as f32)/1024.0;
-    let to_kib_vec = |series: Vec<u64>| series.into_iter().map(to_kib).collect::<Vec<_>>();
+    let to_kib_vec = |series: &Vec<u64>| series.into_iter().map(|&val| to_kib(val)).collect::<Vec<_>>();
     // https://github.com/plotters-rs/plotters/blob/master/plotters/examples/area-chart.rs
     let root = SVGBackend::new(out.to_str().expect("graph path was not valid unicode"), (1024, 768)).into_drawing_area();
     root.fill(&WHITE).unwrap();
@@ -460,10 +460,23 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         .draw()
         .unwrap();
     let mut palette_idx = 0;
+    let first_series = vec![0.0; last_series.len()];
+    let mut prev_series = &first_series;
     let mut draw_series = |series: &Vec<u64>, label: &str| {
         let color = Palette99::pick(palette_idx);
-        chart.draw_series(AreaSeries::new(series.into_iter().map(|&v| to_kib(v)).enumerate(), 0.0, color.filled())).unwrap().label(label).legend(move |(x, y)| Rectangle::new([(x, y - 5), (x + 10, y + 5)], color.filled()));
+        let series = to_kib_vec(series);
+        chart.draw_series(
+            LineSeries::new(series.into_iter().enumerate(), color.filled())
+        )
+            .unwrap()
+            .label(label)
+            .legend(move |(x, y)| Rectangle::new([(x, y - 5), (x + 10, y + 5)], color.filled()));
+        chart.draw_series(std::iter::once(Polygon::new(
+            prev_series.clone().into_iter().enumerate().chain(series.clone().into_iter().enumerate()).collect::<Vec<_>>(),
+            color.mix(0.7).filled(),
+        ))).unwrap();
         palette_idx += 1;
+        prev_series = &series;
     };
     draw_series(&vdso_series, "VDSO");
     draw_series(&anon_map_series, "Anonymous Mappings");
