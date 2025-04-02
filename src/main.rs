@@ -15,8 +15,8 @@
 
 use clap::Parser;
 use env_logger::Builder;
-use gnuplot::Figure;
 use log::{warn, LevelFilter};
+use plotters::prelude::*;
 use procfs::process::{self, MMPermissions, MMapPath::*, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
@@ -221,7 +221,7 @@ fn get_processes(
             };
 
         })
-        .collect::<ProcResult<Vec<ProcNode>>>()?;
+        .collect::<ProcResult<Vec<ProcNode>>>()?; // TODO: un-haskellize this (sorry, I got curried away)
     let Some(regex) = regex else {
         return Ok(proc_tree);
     };
@@ -440,15 +440,35 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     let lmedian_idx = if max_idx == 0 {None} else {Some(get_median_idx(iter.clone(), 0..=max_idx))};
     let rmedian_idx = if max_idx == last_series.len() {None} else {Some(get_median_idx(iter.clone(), max_idx..=last_series.len()))};
     let xs = Vec::from_iter(0..last_series.len());
-    let mut fg = Figure::new();
-    fg.axes2d()
-        .lines(&xs, stack_series, &[])
-        .lines(&xs, heap_series, &[])
-        .lines(&xs, bin_text_series, &[])
-        .lines(&xs, lib_text_series, &[])
-        .lines(&xs, bin_data_series, &[])
-        .lines(&xs, lib_data_series, &[])
-        .lines(&xs, anon_map_series, &[])
-        .lines(&xs, vdso_series, &[]);
-    fg.show().unwrap();
+    let to_kib = |val: u64| (val as f32)/1024.0;
+    let to_kib_vec = |series: Vec<u64>| series.into_iter().map(to_kib).collect::<Vec<_>>();
+    // https://github.com/plotters-rs/plotters/blob/master/plotters/examples/area-chart.rs
+    let root = SVGBackend::new(out.to_str().expect("graph path was not valid unicode"), (1024, 768)).into_drawing_area();
+    root.fill(&WHITE).unwrap();
+    let mut chart = ChartBuilder::on(&root)
+        .set_label_area_size(LabelAreaPosition::Left, 60)
+        .set_label_area_size(LabelAreaPosition::Bottom, 60)
+        .build_cartesian_2d(0..last_series.len(), 0.0..(to_kib(last_series[max_idx])*1.02))
+        .unwrap();
+    chart
+        .configure_mesh()
+        .disable_x_mesh()
+        .y_desc("Total Proportional Set Size (KiB)")
+        .x_desc("Time (s)")
+        .draw()
+        .unwrap();
+    let mut palette_idx = 0;
+    let mut draw_series = |series: &Vec<u64>, label: &str| {
+        chart.draw_series(AreaSeries::new(series.into_iter().map(|&v| to_kib(v)).enumerate(), 0.0, Palette99::pick(palette_idx))).unwrap().label(label);
+        palette_idx += 1;
+    };
+    draw_series(&vdso_series, "VDSO");
+    draw_series(&anon_map_series, "Anonymous Mappings");
+    draw_series(&lib_data_series, "Library Data");
+    draw_series(&bin_data_series, "Binary Data");
+    draw_series(&lib_text_series, "Library Text");
+    draw_series(&bin_text_series, "Binary Text");
+    draw_series(&heap_series, "Heap");
+    draw_series(&stack_series, "Stack");
+    root.present().expect(&format!("Unable to write graph to {}.", out.display()));
 }
