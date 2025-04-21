@@ -36,6 +36,8 @@ use std::time::{Duration, Instant};
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
 // compared to smaps_rollup. Gotta figure out why.
+// TODO: x-axis on graph is somewhat broken. Need to record the time that a sample was taken and
+// print that on stdout and use that as the x position in the graph.
 #[derive(Parser)]
 #[command(version, about = "Reports process stack, heap, text, and data memory usage. Output is in bytes.", long_about = None)]
 struct Args {
