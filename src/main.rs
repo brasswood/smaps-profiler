@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
 // compared to smaps_rollup. Gotta figure out why.
@@ -149,11 +149,21 @@ fn main() -> io::Result<()> {
     let term = Arc::new(AtomicBool::new(false));
     signal_flag::register(SIGINT, Arc::clone(&term))?;
     while !term.load(Ordering::Relaxed) {
+        let start = Instant::now();
         let procs = get_processes(&re, args.match_children, args.match_self, args.fail_on_noperm).unwrap();
         let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
         print_processes(&procs);
         memory_series.push(sum_memory(&procs));
-        thread::sleep(duration);
+        let elapsed = Instant::now() - start;
+        if elapsed < duration {
+            thread::sleep(duration - (Instant::now() - start));
+        } else if elapsed > duration {
+            warn!(
+                "polling smaps took {}s, overran configured interval of {}s",
+                elapsed.as_secs_f64(),
+                duration.as_secs_f64()
+            );
+        }
     }
     if let Some(path) = args.graph {
         graph_memory(memory_series, path);
