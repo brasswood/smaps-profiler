@@ -94,7 +94,7 @@ struct MemoryExt {
     bin_data_pss: u64,
     lib_data_pss: u64,
     anon_map_pss: u64,
-    other_pss: u64,
+    vdso_pss: u64,
 }
 impl Add for &MemoryExt {
     type Output = MemoryExt;
@@ -108,7 +108,7 @@ impl Add for &MemoryExt {
             bin_data_pss: self.bin_data_pss + rhs.bin_data_pss,
             lib_data_pss: self.lib_data_pss + rhs.lib_data_pss,
             anon_map_pss: self.anon_map_pss + rhs.anon_map_pss,
-            other_pss: self.other_pss + rhs.other_pss,
+            vdso_pss: self.vdso_pss + rhs.vdso_pss,
         }
     }
 }
@@ -299,7 +299,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
             Some(Err(e)) => return Some(Err(e)),
             None => return None,
         };
-        let mut memory_ext = MemoryExt { stack_pss: 0, heap_pss: 0, bin_text_pss: 0, lib_text_pss: 0, bin_data_pss: 0, lib_data_pss: 0, anon_map_pss: 0, other_pss: 0 };
+        let mut memory_ext = MemoryExt { stack_pss: 0, heap_pss: 0, bin_text_pss: 0, lib_text_pss: 0, bin_data_pss: 0, lib_data_pss: 0, anon_map_pss: 0, vdso_pss: 0 };
         for map in maps {
             let path = &map.pathname;
             // https://users.rust-lang.org/t/lazy-evaluation-in-pattern-matching/127565/2
@@ -347,7 +347,24 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
                 Heap => memory_ext.heap_pss += get_pss_or_warn("heap"),
                 Stack => memory_ext.stack_pss += get_pss_or_warn("stack"),
                 Anonymous => memory_ext.anon_map_pss += get_pss_or_warn("anonymous map"),
-                _ => memory_ext.other_pss += get_pss_or_warn("<other map>"),
+                Vdso => memory_ext.vdso_pss += get_pss_or_warn("vdso"),
+                _ => {
+                    let Some(&rss) = map.extension.map.get("Rss") else {
+                        warn!("I don't know how to classify this map, and it doesn't have a RSS field.\
+                            \n  The process is {1} {2}\
+                            \n  The map is {0:?}", map, pid, cmdline);
+                        continue;
+                    };
+                    if rss == 0 {
+                        warn!("I don't know how to classify this map, but at least its RSS is 0.\
+                            \n  The process is {1} {2}\
+                            \n  The map is {0:?}", map, pid, cmdline);
+                    } else {
+                        panic!("FATAL: I don't know how to classify this map, and its RSS is not 0.\
+                            \n  The process is {1} {2}\
+                            \n  The map is {0:?}", map, pid, cmdline);
+                    }
+                },
             } // end match
         } // end for map in maps
         return Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }));
@@ -355,7 +372,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
 }
 
 fn print_processes(processes: &Vec<ProcListing>) {
-    println!("PID\tSTACK_PSS\tHEAP_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tOTHER_PSS\tCMD");
+    println!("PID\tSTACK_PSS\tHEAP_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tCMD");
     for proc_listing in processes {
         let ProcListing {
             pid,
@@ -371,9 +388,9 @@ fn print_processes(processes: &Vec<ProcListing>) {
             bin_data_pss: bin_data,
             lib_data_pss: lib_data,
             anon_map_pss: anon_map,
-            other_pss: other,
+            vdso_pss: vdso,
         } = memory_ext;
-        println!("{pid}\t{stack}\t{heap}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{other}\t{cmdline}");
+        println!("{pid}\t{stack}\t{heap}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{cmdline}");
     }
 }
 
@@ -386,7 +403,7 @@ fn sum_memory(processes: &Vec<ProcListing>) -> MemoryExt {
         bin_data_pss: 0,
         lib_data_pss: 0,
         anon_map_pss: 0,
-        other_pss: 0,
+        vdso_pss: 0,
     };
     processes.into_iter().fold(init, |acc, proc_listing| acc + &proc_listing.memory_ext)
 }
@@ -404,7 +421,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     let mut bin_data_series = empty_vec.clone();
     let mut lib_data_series = empty_vec.clone();
     let mut anon_map_series = empty_vec.clone();
-    let mut other_series = empty_vec.clone();
+    let mut vdso_series = empty_vec.clone();
     for m in memory_series {
         let mut acc = m.stack_pss;
         stack_series.push(m.stack_pss);
@@ -420,10 +437,10 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         lib_data_series.push(acc);
         acc += m.anon_map_pss;
         anon_map_series.push(acc);
-        acc += m.other_pss;
-        other_series.push(acc);
+        acc += m.vdso_pss;
+        vdso_series.push(acc);
     }
-    let last_series = &other_series;
+    let last_series = &vdso_series;
     let iter = last_series.into_iter().enumerate();
     let (max_idx, _) = iter.clone().max_by_key(|(_, x)| **x).expect("tried to find maximum of empty series somehow");
     fn get_median_idx<T: Iterator>(iter: Enumerate<T>, range: RangeInclusive<usize>) -> usize where <T as Iterator>::Item: Ord {
@@ -465,6 +482,6 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     draw_series(&bin_data_series, "Binary Data");
     draw_series(&lib_data_series, "Library Data");
     draw_series(&anon_map_series, "Anonymous Mappings");
-    draw_series(&other_series, "Other");
+    draw_series(&vdso_series, "VDSO");
     fg.save_to_svg(out.as_path(), 1024, 768).unwrap();
 }
