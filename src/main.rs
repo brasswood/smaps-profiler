@@ -507,20 +507,18 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     let first_series = vec![0.0; zero_series.len()];
     let mut prev_series = first_series;
     let mut draw_series = |series: &Vec<u64>, label: &str| {
-        let mut has_value = false;
+        let mut is_used = false;
         let series = prev_series
             .iter()
             .zip(series)
             .map(|(a,b)| {
-                if *b != 0 {has_value = true;}
+                if *b != 0 { is_used = true; }
                 a + to_kib(*b)
             })
             .collect();
-        println!("{:?}", series);
-        if has_value {
-            axes.fill_between(&xs, &prev_series, &series, &[Caption(label), FillAlpha(0.7)]);
-            prev_series = series;
-        }
+        let label= if is_used { label } else { &format!("{label} (unused)") };
+        axes.fill_between(&xs, &prev_series, &series, &[Caption(label), FillAlpha(0.7)]);
+        prev_series = series;
     };
 
     draw_series(&stack_series, "Stack");
