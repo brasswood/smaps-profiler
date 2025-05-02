@@ -16,6 +16,7 @@
 use clap::Parser;
 use env_logger::Builder;
 use gnuplot::{AxesCommon, Figure, Coordinate::*, DashType::*, LegendOption::*, PlotOption::*, AutoOption::*};
+use indexmap::IndexMap;
 use log::{warn, LevelFilter};
 use procfs::process::{self, MMPermissions, MMapPath::*, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
@@ -89,29 +90,65 @@ struct ProcListing {
 struct MemoryExt {
     stack_pss: u64,
     heap_pss: u64,
+    thread_stack_pss: u64,
     bin_text_pss: u64,
     lib_text_pss: u64,
     bin_data_pss: u64,
     lib_data_pss: u64,
     anon_map_pss: u64,
     vdso_pss: u64,
+    vvar_pss: u64,
+    vsyscall_pss: u64,
+    vsys_pss: u64,
+    other_map: HashMap<String, u64>,
 }
-impl Add for &MemoryExt {
+
+impl MemoryExt {
+    fn new() -> MemoryExt {
+        MemoryExt {
+            stack_pss: 0,
+            heap_pss: 0,
+            thread_stack_pss: 0,
+            bin_text_pss: 0,
+            lib_text_pss: 0,
+            bin_data_pss: 0,
+            lib_data_pss: 0,
+            anon_map_pss: 0,
+            vdso_pss: 0,
+            vvar_pss: 0,
+            vsyscall_pss: 0,
+            vsys_pss: 0,
+            other_map: HashMap::new(),
+        }
+    }
+}
+
+impl Add<&MemoryExt> for MemoryExt {
     type Output = MemoryExt;
 
     fn add(self, rhs: &MemoryExt) -> MemoryExt {
+        let mut merged = self.other_map;
+        for (k, v) in &rhs.other_map {
+            *merged.entry(k.clone()).or_insert(0) += v;
+        }
         MemoryExt {
             stack_pss: self.stack_pss + rhs.stack_pss,
             heap_pss: self.heap_pss + rhs.heap_pss,
+            thread_stack_pss: self.thread_stack_pss + rhs.thread_stack_pss,
             bin_text_pss: self.bin_text_pss + rhs.bin_text_pss,
             lib_text_pss: self.lib_text_pss + rhs.lib_text_pss,
             bin_data_pss: self.bin_data_pss + rhs.bin_data_pss,
             lib_data_pss: self.lib_data_pss + rhs.lib_data_pss,
             anon_map_pss: self.anon_map_pss + rhs.anon_map_pss,
             vdso_pss: self.vdso_pss + rhs.vdso_pss,
+            vvar_pss: self.vvar_pss + rhs.vvar_pss,
+            vsyscall_pss: self.vsyscall_pss + rhs.vvar_pss,
+            vsys_pss: self.vsys_pss + rhs.vsys_pss,
+            other_map: merged,
         }
     }
 }
+/*
 impl Add<&MemoryExt> for MemoryExt {
     type Output = MemoryExt;
 
@@ -119,6 +156,7 @@ impl Add<&MemoryExt> for MemoryExt {
         &self + rhs
     }
 }
+*/
 
 fn main() -> io::Result<()> {
     // Design: incrementally gather the data we need from each process
@@ -299,7 +337,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
             Some(Err(e)) => return Some(Err(e)),
             None => return None,
         };
-        let mut memory_ext = MemoryExt { stack_pss: 0, heap_pss: 0, bin_text_pss: 0, lib_text_pss: 0, bin_data_pss: 0, lib_data_pss: 0, anon_map_pss: 0, vdso_pss: 0 };
+        let mut memory_ext = MemoryExt::new();
         for map in maps {
             let path = &map.pathname;
             // https://users.rust-lang.org/t/lazy-evaluation-in-pattern-matching/127565/2
@@ -346,8 +384,16 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
                 },
                 Heap => memory_ext.heap_pss += get_pss_or_warn("heap"),
                 Stack => memory_ext.stack_pss += get_pss_or_warn("stack"),
+                TStack(tid) => memory_ext.thread_stack_pss += get_pss_or_warn(&format!("thread {} stack", tid)),
                 Anonymous => memory_ext.anon_map_pss += get_pss_or_warn("anonymous map"),
                 Vdso => memory_ext.vdso_pss += get_pss_or_warn("vdso"),
+                Vvar => memory_ext.vvar_pss += get_pss_or_warn("vvar"),
+                Vsyscall => memory_ext.vsyscall_pss += get_pss_or_warn("vsyscall"),
+                Vsys(_) => memory_ext.vsys_pss += get_pss_or_warn("shared memory segment (key {})"),
+                Other(path) => {
+                    let pss = get_pss_or_warn(&format!("other path {}", path));
+                    *memory_ext.other_map.entry(path.clone()).or_insert(0) += pss;
+                },
                 _ => {
                     let Some(&rss) = map.extension.map.get("Rss") else {
                         warn!("I don't know how to classify this map, and it doesn't have a RSS field.\
@@ -372,7 +418,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
 }
 
 fn print_processes(processes: &Vec<ProcListing>) {
-    println!("PID\tSTACK_PSS\tHEAP_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tCMD");
+    println!("PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tCMD");
     for proc_listing in processes {
         let ProcListing {
             pid,
@@ -383,29 +429,25 @@ fn print_processes(processes: &Vec<ProcListing>) {
         let MemoryExt {
             stack_pss: stack,
             heap_pss: heap,
+            thread_stack_pss: thread_stack,
             bin_text_pss: bin_text,
             lib_text_pss: lib_text,
             bin_data_pss: bin_data,
             lib_data_pss: lib_data,
             anon_map_pss: anon_map,
             vdso_pss: vdso,
+            vvar_pss: vvar,
+            vsyscall_pss: vsyscall,
+            vsys_pss: vsys,
+            other_map
         } = memory_ext;
-        println!("{pid}\t{stack}\t{heap}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{cmdline}");
+        let other: u64 = other_map.values().sum();
+        println!("{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{cmdline}");
     }
 }
 
 fn sum_memory(processes: &Vec<ProcListing>) -> MemoryExt {
-    let init = MemoryExt {
-        stack_pss: 0,
-        heap_pss: 0,
-        bin_text_pss: 0,
-        lib_text_pss: 0,
-        bin_data_pss: 0,
-        lib_data_pss: 0,
-        anon_map_pss: 0,
-        vdso_pss: 0,
-    };
-    processes.into_iter().fold(init, |acc, proc_listing| acc + &proc_listing.memory_ext)
+    processes.into_iter().fold(MemoryExt::new(), |acc, proc_listing| acc + &proc_listing.memory_ext)
 }
 
 fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
@@ -416,17 +458,25 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     let empty_vec = Vec::with_capacity(memory_series.len());
     let mut stack_series = empty_vec.clone();
     let mut heap_series = empty_vec.clone();
+    let mut thread_stack_series = empty_vec.clone();
     let mut bin_text_series = empty_vec.clone();
     let mut lib_text_series = empty_vec.clone();
     let mut bin_data_series = empty_vec.clone();
     let mut lib_data_series = empty_vec.clone();
     let mut anon_map_series = empty_vec.clone();
     let mut vdso_series = empty_vec.clone();
+    let mut vvar_series = empty_vec.clone();
+    let mut vsyscall_series = empty_vec.clone();
+    let mut vsys_series = empty_vec.clone();
+    let mut other_series = IndexMap::new();
+    let mut last_series = empty_vec.clone();
     for m in memory_series {
         let mut acc = m.stack_pss;
         stack_series.push(m.stack_pss);
         acc += m.heap_pss;
         heap_series.push(acc);
+        acc += m.thread_stack_pss;
+        thread_stack_series.push(acc);
         acc += m.bin_text_pss;
         bin_text_series.push(acc);
         acc += m.lib_text_pss;
@@ -439,9 +489,20 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         anon_map_series.push(acc);
         acc += m.vdso_pss;
         vdso_series.push(acc);
+        acc += m.vvar_pss;
+        vvar_series.push(acc);
+        acc += m.vsyscall_pss;
+        vsyscall_series.push(acc);
+        acc += m.vsys_pss;
+        vsys_series.push(acc);
+        for (path, pss) in m.other_map {
+            acc += pss;
+            other_series.entry(path).or_insert(last_series.clone()).push(acc);
+        }
+        last_series.push(acc);
     }
-    let last_series = &vdso_series;
-    let iter = last_series.into_iter().enumerate();
+    let last_series = last_series;
+    let iter = last_series.iter().enumerate();
     let (max_idx, _) = iter.clone().max_by_key(|(_, x)| **x).expect("tried to find maximum of empty series somehow");
     fn get_median_idx<T: Iterator>(iter: Enumerate<T>, range: RangeInclusive<usize>) -> usize where <T as Iterator>::Item: Ord {
         let mut v: Vec<_> = iter.skip(*range.start()).take(range.end() - range.start() + 1).collect();
@@ -472,16 +533,24 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     let mut draw_series = |series: &Vec<u64>, label: &str| {
         let series = to_kib_vec(series);
         axes.fill_between(&xs, &prev_series, &series, &[Caption(label), FillAlpha(0.7)]);
+        println!("{:?}", series);
         prev_series = series;
     };
 
     draw_series(&stack_series, "Stack");
     draw_series(&heap_series, "Heap");
+    draw_series(&thread_stack_series, "Thread Stack");
     draw_series(&bin_text_series, "Binary Text");
     draw_series(&lib_text_series, "Library Text");
     draw_series(&bin_data_series, "Binary Data");
     draw_series(&lib_data_series, "Library Data");
     draw_series(&anon_map_series, "Anonymous Mappings");
     draw_series(&vdso_series, "VDSO");
+    draw_series(&vvar_series, "Shared Kernel Vars");
+    draw_series(&vsyscall_series, "Virtual Syscalls");
+    draw_series(&vsys_series, "Shared Memory");
+    for (path, series) in other_series {
+        draw_series(&series, &path);
+    }
     fg.save_to_svg(out.as_path(), 1024, 768).unwrap();
 }
