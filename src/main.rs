@@ -27,7 +27,7 @@ use signal_hook::flag as signal_flag;
 use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
 use std::io;
-use std::iter::Enumerate;
+use std::iter::{self, Enumerate};
 use std::ops::{Add, RangeInclusive};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -469,56 +469,32 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     let mut vsyscall_series = empty_vec.clone();
     let mut vsys_series = empty_vec.clone();
     let mut other_series = IndexMap::new();
-    let mut last_series = empty_vec.clone();
+    let mut zero_series = Vec::new();
     for m in memory_series {
-        let mut acc = m.stack_pss;
         stack_series.push(m.stack_pss);
-        acc += m.heap_pss;
-        heap_series.push(acc);
-        acc += m.thread_stack_pss;
-        thread_stack_series.push(acc);
-        acc += m.bin_text_pss;
-        bin_text_series.push(acc);
-        acc += m.lib_text_pss;
-        lib_text_series.push(acc);
-        acc += m.bin_data_pss;
-        bin_data_series.push(acc);
-        acc += m.lib_data_pss;
-        lib_data_series.push(acc);
-        acc += m.anon_map_pss;
-        anon_map_series.push(acc);
-        acc += m.vdso_pss;
-        vdso_series.push(acc);
-        acc += m.vvar_pss;
-        vvar_series.push(acc);
-        acc += m.vsyscall_pss;
-        vsyscall_series.push(acc);
-        acc += m.vsys_pss;
-        vsys_series.push(acc);
+        heap_series.push(m.heap_pss);
+        thread_stack_series.push(m.thread_stack_pss);
+        bin_text_series.push(m.bin_text_pss);
+        lib_text_series.push(m.lib_text_pss);
+        bin_data_series.push(m.bin_data_pss);
+        lib_data_series.push(m.lib_data_pss);
+        anon_map_series.push(m.anon_map_pss);
+        vdso_series.push(m.vdso_pss);
+        vvar_series.push(m.vvar_pss);
+        vsyscall_series.push(m.vsyscall_pss);
+        vsys_series.push(m.vsys_pss);
         for (path, pss) in m.other_map {
-            acc += pss;
-            other_series.entry(path).or_insert(last_series.clone()).push(acc);
+            other_series.entry(path).or_insert(zero_series.clone()).push(pss);
         }
-        last_series.push(acc);
+        zero_series.push(0);
     }
-    let last_series = last_series;
-    let iter = last_series.iter().enumerate();
-    let (max_idx, _) = iter.clone().max_by_key(|(_, x)| **x).expect("tried to find maximum of empty series somehow");
-    fn get_median_idx<T: Iterator>(iter: Enumerate<T>, range: RangeInclusive<usize>) -> usize where <T as Iterator>::Item: Ord {
-        let mut v: Vec<_> = iter.skip(*range.start()).take(range.end() - range.start() + 1).collect();
-        // can't use sort_by_key here: https://users.rust-lang.org/t/lifetime-problem-with-sort-unstable-by-key/21748/2
-        v.sort_by(|(_, x1), (_, x2)| x1.cmp(x2));
-        v[v.len()/2].0
-    }
-    let lmedian_idx = if max_idx == 0 {None} else {Some(get_median_idx(iter.clone(), 0..=max_idx))};
-    let rmedian_idx = if max_idx == last_series.len() {None} else {Some(get_median_idx(iter.clone(), max_idx..=last_series.len()))};
-    let xs = Vec::from_iter(0..last_series.len());
+    
+    let xs = Vec::from_iter(0..zero_series.len());
     let to_kib = |val: u64| (val as f32)/1024.0;
     let to_kib_vec = |series: &Vec<u64>| series.into_iter().map(|&val| to_kib(val)).collect::<Vec<_>>();
-
     let mut fg = Figure::new();
     let axes = fg.axes2d();
-    let x_len = (last_series.len()-1) as f64 / 0.75; // hack to make legend appear outside of chart area :(
+    let x_len = (zero_series.len()-1) as f64 / 0.75; // hack to make legend appear outside of chart area :(
     axes.set_x_range(Fix(0.0), Fix(x_len))
         .set_y_ticks(Some((Auto, 5)), &[], &[])
         .set_y_grid(true)
@@ -528,10 +504,14 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         .set_legend(Graph(1.0), Graph(1.0), &[Invert], &[])
         .set_x_label("Time (s)", &[])
         .set_y_label("Total Proportional Set Size (KiB)", &[]);
-    let first_series = vec![0.0; last_series.len()];
+    let first_series = vec![0.0; zero_series.len()];
     let mut prev_series = first_series;
     let mut draw_series = |series: &Vec<u64>, label: &str| {
-        let series = to_kib_vec(series);
+        let series = prev_series
+            .iter()
+            .zip(series)
+            .map(|(a,b)| a + to_kib(*b))
+            .collect();
         axes.fill_between(&xs, &prev_series, &series, &[Caption(label), FillAlpha(0.7)]);
         println!("{:?}", series);
         prev_series = series;
@@ -552,5 +532,19 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     for (path, series) in other_series {
         draw_series(&series, &path);
     }
+    /*
+    let last_series = prev_series;
+    let iter = last_series.iter().enumerate();
+    let (max_idx, _) = iter.clone().max_by_key(|(_, x)| **x).expect("tried to find maximum of empty series somehow");
+    fn get_median_idx<T: Iterator>(iter: Enumerate<T>, range: RangeInclusive<usize>) -> usize where <T as Iterator>::Item: Ord {
+        let mut v: Vec<_> = iter.skip(*range.start()).take(range.end() - range.start() + 1).collect();
+        // can't use sort_by_key here: https://users.rust-lang.org/t/lifetime-problem-with-sort-unstable-by-key/21748/2
+        v.sort_by(|(_, x1), (_, x2)| x1.cmp(x2));
+        v[v.len()/2].0
+    }
+    let lmedian_idx = if max_idx == 0 {None} else {Some(get_median_idx(iter.clone(), 0..=max_idx))};
+    let rmedian_idx = if max_idx == last_series.len() {None} else {Some(get_median_idx(iter.clone(), max_idx..=last_series.len()))};
+    */
+
     fg.save_to_svg(out.as_path(), 1024, 768).unwrap();
 }
