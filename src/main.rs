@@ -16,7 +16,6 @@
 use clap::Parser;
 use env_logger::Builder;
 use gnuplot::{AxesCommon, Figure, Coordinate::*, DashType::*, LegendOption::*, PlotOption::*, AutoOption::*};
-use indexmap::IndexMap;
 use log::{warn, LevelFilter};
 use procfs::process::{self, MMPermissions, MMapPath::*, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
@@ -24,7 +23,7 @@ use procfs::ProcResult;
 use regex;
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::RandomState;
 use std::io;
 use std::iter::{self, Enumerate};
@@ -468,7 +467,8 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     let mut vvar_series = empty_vec.clone();
     let mut vsyscall_series = empty_vec.clone();
     let mut vsys_series = empty_vec.clone();
-    let mut other_series = IndexMap::new();
+    // want a BTreeMap here to make the order of categories as consistent as possible in final graph
+    let mut other_series = BTreeMap::new();
     let mut zero_series = Vec::new();
     for m in memory_series {
         stack_series.push(m.stack_pss);
