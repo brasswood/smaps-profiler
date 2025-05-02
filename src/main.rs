@@ -506,6 +506,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         .set_y_label("Total Proportional Set Size (KiB)", &[]);
     let first_series = vec![0.0; zero_series.len()];
     let mut prev_series = first_series;
+    // TODO: use a cycle of 16 colors
     let mut draw_series = |series: &Vec<u64>, label: &str| {
         let mut is_used = false;
         let series = prev_series
@@ -517,6 +518,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
             })
             .collect();
         let label= if is_used { label } else { &format!("{label} (unused)") };
+        let label = &label.replace("_", "\\_"); // escape LaTeX _
         axes.fill_between(&xs, &prev_series, &series, &[Caption(label), FillAlpha(0.7)]);
         prev_series = series;
     };
