@@ -157,7 +157,30 @@ impl Add<&MemoryExt> for MemoryExt {
 */
 
 // http://vrl.cs.brown.edu/color
-const PALETTE: [ColorType<&str>; 20] = [
+const PALETTE1: [ColorType<&str>; 20] = [
+    RGBString("#35618f"),
+    RGBString("#61a3dc"),
+    RGBString("#7244b9"),
+    RGBString("#26cdca"),
+    RGBString("#1c875c"),
+    RGBString("#ade47c"),
+    RGBString("#707b5d"),
+    RGBString("#3fd34a"),
+    RGBString("#709f0f"),
+    RGBString("#c5c9b4"),
+    RGBString("#88502e"),
+    RGBString("#fd5925"),
+    RGBString("#8e1023"),
+    RGBString("#eac328"),
+    RGBString("#ed3e7e"),
+    RGBString("#fb9fa8"),
+    RGBString("#f7931e"),
+    RGBString("#a18ff8"),
+    RGBString("#bf11af"),
+    RGBString("#f27ff5"),
+];
+
+const PALETTE2: [ColorType<&str>; 20] = [
     RGBString("#48bf8e"),
     RGBString("#8a0458"),
     RGBString("#93c920"),
@@ -179,6 +202,54 @@ const PALETTE: [ColorType<&str>; 20] = [
     RGBString("#cd6810"),
     RGBString("#ea7c97"),
 ];
+
+const PALETTE3: [ColorType<&str>; 20] = [
+    RGBString("#58b5e1"),
+    RGBString("#76295f"),
+    RGBString("#c0e15c"),
+    RGBString("#b825af"),
+    RGBString("#55f17b"),
+    RGBString("#e32851"),
+    RGBString("#15dec5"),
+    RGBString("#852405"),
+    RGBString("#b5ceaa"),
+    RGBString("#0e503e"),
+    RGBString("#f6b0ec"),
+    RGBString("#658114"),
+    RGBString("#5425df"),
+    RGBString("#fad139"),
+    RGBString("#1c4585"),
+    RGBString("#3aa609"),
+    RGBString("#fa79f5"),
+    RGBString("#6d4c2b"),
+    RGBString("#fcb790"),
+    RGBString("#7377ec"),
+];
+
+const PALETTE4: [ColorType<&str>; 20] = [
+    RGBString("#a1def0"),
+    RGBString("#8b123a"),
+    RGBString("#4dc172"),
+    RGBString("#e3488e"),
+    RGBString("#73f02e"),
+    RGBString("#ae4acd"),
+    RGBString("#add51f"),
+    RGBString("#333a9e"),
+    RGBString("#fcd107"),
+    RGBString("#2b3fff"),
+    RGBString("#cddb9b"),
+    RGBString("#de19f7"),
+    RGBString("#056e12"),
+    RGBString("#cc99d9"),
+    RGBString("#6e390d"),
+    RGBString("#3d99ce"),
+    RGBString("#f24219"),
+    RGBString("#145a6a"),
+    RGBString("#fc8f3b"),
+    RGBString("#447cfe"),
+];
+
+const PALETTE: [ColorType<&str>; 20] = PALETTE3;
 
 fn main() -> io::Result<()> {
     // Design: incrementally gather the data we need from each process
