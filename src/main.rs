@@ -20,7 +20,6 @@ use log::{warn, LevelFilter};
 use procfs::process::{self, MMPermissions, MMapPath::*, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
-use regex;
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -342,34 +341,33 @@ fn get_processes(
                     let pid = stat.pid;
                     if !match_self && pid == me {return Ok(None);}
                     let ppid = stat.ppid;
-                    process.cmdline().and_then(|c| {
+                    process.cmdline().map(|c| {
                         let cmdline = c
                             .into_iter()
                             .fold("".to_owned(), |acc, val| acc + " " + &val); // TODO: why is this a Vec?
-                        Ok(Some(ProcResult::Ok(ProcNode {
+                        Some(ProcResult::Ok(ProcNode {
                             pid,
                             ppid,
                             cmdline,
                             process,
                             children: vec![],
-                        })))
+                        }))
                     })
                 })
             }); // This should probably be illegal
 
-            return match filter_errors(result, fail_on_noperm) {
+            match filter_errors(result, fail_on_noperm) {
                     Some(Ok(tuple)) => tuple,
                     Some(Err(e)) => Some(Err(e)),
                     None => None,
-            };
-
+            }
         })
         .collect::<ProcResult<Vec<ProcNode>>>()?; // TODO: un-haskellize this (sorry, I got curried away)
     let Some(regex) = regex else {
         return Ok(proc_tree);
     };
-    let kv_pairs = (&proc_tree)
-        .into_iter()
+    let kv_pairs = proc_tree
+        .iter()
         .enumerate()
         .map(|(i, proc_node)| (proc_node.pid, i));
     let proc_map: HashMap<_, _, RandomState> = HashMap::from_iter(kv_pairs);
@@ -378,7 +376,7 @@ fn get_processes(
         if proc_node.ppid != 0 {
             let parent_idx = proc_map
                 .get(&proc_node.ppid)
-                .expect(&format!("pid {} not found in proc_map", proc_node.ppid));
+                .unwrap_or_else(|| panic!("pid {} not found in proc_map", proc_node.ppid));
             proc_tree[*parent_idx].children.push(idx);
         }
     }
@@ -386,21 +384,20 @@ fn get_processes(
     fn add_process_recursive(
         matched: &mut HashSet<usize>,
         proc_tree: &Vec<ProcNode>,
-        proc_map: &HashMap<i32, usize>,
         proc_idx: usize,
     ) {
         matched.insert(proc_idx);
         let proc_node = &proc_tree[proc_idx];
         for child_idx in &proc_node.children {
-            add_process_recursive(matched, proc_tree, proc_map, *child_idx);
+            add_process_recursive(matched, proc_tree, *child_idx);
         }
     }
 
     let mut matched: HashSet<usize> = HashSet::new();
-    for (proc_idx, proc_node) in (&proc_tree).into_iter().enumerate() {
+    for (proc_idx, proc_node) in proc_tree.iter().enumerate() {
         if regex.is_match(&proc_node.cmdline) {
             if match_children {
-                add_process_recursive(&mut matched, &proc_tree, &proc_map, proc_idx);
+                add_process_recursive(&mut matched, &proc_tree, proc_idx);
             } else {
                 matched.insert(proc_idx);
             }
@@ -418,7 +415,7 @@ fn get_processes(
             }
         })
         .collect();
-    return Ok(result);
+    Ok(result)
 }
 
 fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<ProcListing>> {
@@ -506,7 +503,7 @@ fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<P
                 },
             } // end match
         } // end for map in maps
-        return Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }));
+        Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }))
     }).collect()
 }
 
@@ -539,8 +536,8 @@ fn print_processes(processes: &Vec<ProcListing>) {
     }
 }
 
-fn sum_memory(processes: &Vec<ProcListing>) -> MemoryExt {
-    processes.into_iter().fold(MemoryExt::new(), |acc, proc_listing| acc + &proc_listing.memory_ext)
+fn sum_memory(processes: &[ProcListing]) -> MemoryExt {
+    processes.iter().fold(MemoryExt::new(), |acc, proc_listing| acc + &proc_listing.memory_ext)
 }
 
 fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
