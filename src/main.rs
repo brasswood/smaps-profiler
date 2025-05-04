@@ -15,7 +15,7 @@
 
 use clap::Parser;
 use env_logger::Builder;
-use gnuplot::{AxesCommon, Figure, Coordinate::*, DashType::*, LegendOption::*, PlotOption::*, AutoOption::*};
+use gnuplot::{AxesCommon, Figure, ColorType, Coordinate::*, DashType::*, LegendOption::*, PlotOption::*, AutoOption::*, RGBString};
 use log::{warn, LevelFilter};
 use procfs::process::{self, MMPermissions, MMapPath::*, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
@@ -155,6 +155,30 @@ impl Add<&MemoryExt> for MemoryExt {
     }
 }
 */
+
+// http://vrl.cs.brown.edu/color
+const PALETTE: [ColorType<&str>; 20] = [
+    RGBString("#48bf8e"),
+    RGBString("#8a0458"),
+    RGBString("#93c920"),
+    RGBString("#7125bd"),
+    RGBString("#65f112"),
+    RGBString("#fd2c3b"),
+    RGBString("#1b511d"),
+    RGBString("#ef4cd0"),
+    RGBString("#40b8e1"),
+    RGBString("#73350e"),
+    RGBString("#f1cbd5"),
+    RGBString("#26496d"),
+    RGBString("#c6dbae"),
+    RGBString("#3447b4"),
+    RGBString("#f7d153"),
+    RGBString("#ca81e6"),
+    RGBString("#83976d"),
+    RGBString("#87a9fd"),
+    RGBString("#cd6810"),
+    RGBString("#ea7c97"),
+];
 
 fn main() -> io::Result<()> {
     // Design: incrementally gather the data we need from each process
@@ -490,7 +514,6 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     
     let xs = Vec::from_iter(0..zero_series.len());
     let to_kib = |val: u64| (val as f32)/1024.0;
-    let to_kib_vec = |series: &Vec<u64>| series.into_iter().map(|&val| to_kib(val)).collect::<Vec<_>>();
     let mut fg = Figure::new();
     let axes = fg.axes2d();
     let x_len = (zero_series.len()-1) as f64 / 0.75; // hack to make legend appear outside of chart area :(
@@ -505,7 +528,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         .set_y_label("Total Proportional Set Size (KiB)", &[]);
     let first_series = vec![0.0; zero_series.len()];
     let mut prev_series = first_series;
-    // TODO: use a cycle of 16 colors
+    let mut i = 0;
     let mut draw_series = |series: &Vec<u64>, label: &str| {
         let mut is_used = false;
         let series = prev_series
@@ -518,8 +541,9 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
             .collect();
         let label= if is_used { label } else { &format!("{label} (unused)") };
         let label = &label.replace("_", "\\_"); // escape LaTeX _
-        axes.fill_between(&xs, &prev_series, &series, &[Caption(label), FillAlpha(0.7)]);
+        axes.fill_between(&xs, &prev_series, &series, &[Caption(label), FillAlpha(0.7), Color(PALETTE[i].clone())]);
         prev_series = series;
+        i = (i + 1) % PALETTE.len();
     };
 
     draw_series(&stack_series, "Stack");
