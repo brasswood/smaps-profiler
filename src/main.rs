@@ -15,7 +15,10 @@
 
 use clap::Parser;
 use env_logger::Builder;
-use gnuplot::{AxesCommon, Figure, ColorType, Coordinate::*, DashType::*, LegendOption::*, PlotOption::*, AutoOption::*, RGBString};
+use gnuplot::{
+    AutoOption::*, AxesCommon, ColorType, Coordinate::*, DashType::*, Figure, LegendOption::*,
+    PlotOption::*, RGBString,
+};
 use log::{warn, LevelFilter};
 use procfs::process::{self, MMPermissions, MMapPath::*, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
@@ -27,8 +30,8 @@ use std::hash::RandomState;
 use std::io;
 use std::ops::Add;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -282,7 +285,13 @@ fn main() -> io::Result<()> {
     signal_flag::register(SIGINT, Arc::clone(&term))?;
     while !term.load(Ordering::Relaxed) {
         let start = Instant::now();
-        let procs = get_processes(&re, args.match_children, args.match_self, args.fail_on_noperm).unwrap();
+        let procs = get_processes(
+            &re,
+            args.match_children,
+            args.match_self,
+            args.fail_on_noperm,
+        )
+        .unwrap();
         let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
         print_processes(&procs);
         memory_series.push(sum_memory(&procs));
@@ -339,12 +348,14 @@ fn get_processes(
             let result = proc_result.and_then(|process| {
                 process.stat().and_then(|stat| {
                     let pid = stat.pid;
-                    if !match_self && pid == me {return Ok(None);}
+                    if !match_self && pid == me {
+                        return Ok(None);
+                    }
                     let ppid = stat.ppid;
                     process.cmdline().map(|c| {
-                        let cmdline = c
+                        let cmdline = c // TODO: why is process.cmdline() a Vec<String>?
                             .into_iter()
-                            .fold("".to_owned(), |acc, val| acc + " " + &val); // TODO: why is this a Vec?
+                            .fold("".to_owned(), |acc, val| acc + " " + &val);
                         Some(ProcResult::Ok(ProcNode {
                             pid,
                             ppid,
@@ -357,9 +368,9 @@ fn get_processes(
             }); // This should probably be illegal
 
             match filter_errors(result, fail_on_noperm) {
-                    Some(Ok(tuple)) => tuple,
-                    Some(Err(e)) => Some(Err(e)),
-                    None => None,
+                Some(Ok(tuple)) => tuple,
+                Some(Err(e)) => Some(Err(e)),
+                None => None,
             }
         })
         .collect::<ProcResult<Vec<ProcNode>>>()?; // TODO: un-haskellize this (sorry, I got curried away)
@@ -529,7 +540,7 @@ fn print_processes(processes: &Vec<ProcListing>) {
             vvar_pss: vvar,
             vsyscall_pss: vsyscall,
             vsys_pss: vsys,
-            other_map
+            other_map,
         } = memory_ext;
         let other: u64 = other_map.values().sum();
         println!("{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{cmdline}");
@@ -537,7 +548,11 @@ fn print_processes(processes: &Vec<ProcListing>) {
 }
 
 fn sum_memory(processes: &[ProcListing]) -> MemoryExt {
-    processes.iter().fold(MemoryExt::new(), |acc, proc_listing| acc + &proc_listing.memory_ext)
+    processes
+        .iter()
+        .fold(MemoryExt::new(), |acc, proc_listing| {
+            acc + &proc_listing.memory_ext
+        })
 }
 
 fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
@@ -575,16 +590,19 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         vsyscall_series.push(m.vsyscall_pss);
         vsys_series.push(m.vsys_pss);
         for (path, pss) in m.other_map {
-            other_series.entry(path).or_insert(zero_series.clone()).push(pss);
+            other_series
+                .entry(path)
+                .or_insert(zero_series.clone())
+                .push(pss);
         }
         zero_series.push(0);
     }
-    
+
     let xs = Vec::from_iter(0..zero_series.len());
-    let to_kib = |val: u64| (val as f32)/1024.0;
+    let to_kib = |val: u64| (val as f32) / 1024.0;
     let mut fg = Figure::new();
     let axes = fg.axes2d();
-    let x_len = (zero_series.len()-1) as f64 / 0.75; // hack to make legend appear outside of chart area :(
+    let x_len = (zero_series.len() - 1) as f64 / 0.75; // hack to make legend appear outside of chart area :(
     axes.set_x_range(Fix(0.0), Fix(x_len))
         .set_y_ticks(Some((Auto, 5)), &[], &[])
         .set_y_grid(true)
@@ -602,14 +620,25 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         let series = prev_series
             .iter()
             .zip(series)
-            .map(|(a,b)| {
-                if *b != 0 { is_used = true; }
+            .map(|(a, b)| {
+                if *b != 0 {
+                    is_used = true;
+                }
                 a + to_kib(*b)
             })
             .collect();
-        let label= if is_used { label } else { &format!("{label} (unused)") };
+        let label = if is_used {
+            label
+        } else {
+            &format!("{label} (unused)")
+        };
         let label = &label.replace("_", "\\_"); // escape LaTeX _
-        axes.fill_between(&xs, &prev_series, &series, &[Caption(label), FillAlpha(0.7), Color(PALETTE[i].clone())]);
+        axes.fill_between(
+            &xs,
+            &prev_series,
+            &series,
+            &[Caption(label), FillAlpha(0.7), Color(PALETTE[i].clone())],
+        );
         prev_series = series;
         i = (i + 1) % PALETTE.len();
     };
