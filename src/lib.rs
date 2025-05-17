@@ -18,7 +18,7 @@ use procfs::process::{self, MMPermissions, MMapPath::*, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
 use std::collections::{HashMap, HashSet};
-use std::hash::RandomState;
+use std::hash::{Hash, RandomState};
 use std::ops::Add;
 
 pub struct ProcNode {
@@ -79,14 +79,22 @@ impl Default for MemoryExt {
     }
 }
 
+fn add_maps<K, V>(mut lhs: HashMap<K, V>, rhs: &HashMap<K, V>) -> HashMap<K, V>
+where
+    K: Eq + Hash + Clone,
+    V: Add<Output = V> + Default + Clone,
+{
+    for (k, v) in rhs {
+        let entry = lhs.entry(k.clone()).or_default();
+        *entry = entry.clone() + v.clone();
+    }
+    lhs
+}
+
 impl Add<&MemoryExt> for MemoryExt {
     type Output = MemoryExt;
 
     fn add(self, rhs: &MemoryExt) -> MemoryExt {
-        let mut merged = self.other_map;
-        for (k, v) in &rhs.other_map {
-            *merged.entry(k.clone()).or_insert(0) += v;
-        }
         MemoryExt {
             stack_pss: self.stack_pss + rhs.stack_pss,
             heap_pss: self.heap_pss + rhs.heap_pss,
@@ -100,7 +108,7 @@ impl Add<&MemoryExt> for MemoryExt {
             vvar_pss: self.vvar_pss + rhs.vvar_pss,
             vsyscall_pss: self.vsyscall_pss + rhs.vvar_pss,
             vsys_pss: self.vsys_pss + rhs.vsys_pss,
-            other_map: merged,
+            other_map: add_maps(self.other_map, &rhs.other_map),
         }
     }
 }
