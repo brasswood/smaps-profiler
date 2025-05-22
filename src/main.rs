@@ -244,6 +244,7 @@ fn print_processes(processes: &Vec<ProcListing>) {
             vsyscall_pss: vsyscall,
             vsys_pss: vsys,
             other_map,
+            ..
         } = memory_ext;
         let other: u64 = other_map.values().sum();
         println!("{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{cmdline}");

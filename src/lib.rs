@@ -20,27 +20,50 @@ use procfs::ProcResult;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, RandomState};
 use std::ops::Add;
+use std::path::PathBuf;
 
 pub struct ProcNode {
     pub pid: i32,
     pub ppid: i32,
     pub cmdline: String,
+    pub exe: PathBuf,
     pub process: Process,
     pub children: Vec<usize>,
 }
 // I might want a new type that has all the same information as ProcNode, but also with smaps.
 // function delegation for trait impls has been proposed in rust-lang/rfcs/#3530.
 // property delegation as in Kotlin would be nice.
+impl ProcNode {
+    fn try_from_process(process: Process, convert_self: bool) -> ProcResult<Option<ProcNode>> {
+        let stat = process.stat()?;
+        let pid = stat.pid;
+        let me: i32 = std::process::id().try_into().unwrap();
+        if !convert_self && pid == me {
+            return Ok(None);
+        }
+        Ok(Some(ProcNode {
+            pid,
+            ppid: stat.ppid,
+            cmdline: process.cmdline()?.join(" "),
+            exe: process.exe()?,
+            process,
+            children: vec![],
+        }))
+    }
+}
 pub struct ProcListing {
     pub pid: i32,
     pub ppid: i32,
     pub cmdline: String,
+    pub exe: PathBuf,
     pub memory_ext: MemoryExt,
 }
+
 pub struct MemoryExt {
     pub stack_pss: u64,
     pub heap_pss: u64,
     pub thread_stack_pss: u64,
+    pub file_map: HashMap<(PathBuf, MMPermissions), u64>,
     pub bin_text_pss: u64,
     pub lib_text_pss: u64,
     pub bin_data_pss: u64,
@@ -59,6 +82,7 @@ impl MemoryExt {
             stack_pss: 0,
             heap_pss: 0,
             thread_stack_pss: 0,
+            file_map: HashMap::new(),
             bin_text_pss: 0,
             lib_text_pss: 0,
             bin_data_pss: 0,
@@ -99,6 +123,7 @@ impl Add<&MemoryExt> for MemoryExt {
             stack_pss: self.stack_pss + rhs.stack_pss,
             heap_pss: self.heap_pss + rhs.heap_pss,
             thread_stack_pss: self.thread_stack_pss + rhs.thread_stack_pss,
+            file_map: add_maps(self.file_map, &rhs.file_map),
             bin_text_pss: self.bin_text_pss + rhs.bin_text_pss,
             lib_text_pss: self.lib_text_pss + rhs.lib_text_pss,
             bin_data_pss: self.bin_data_pss + rhs.bin_data_pss,
@@ -123,18 +148,20 @@ impl Add<&MemoryExt> for MemoryExt {
 */
 
 fn filter_errors<T>(result: ProcResult<T>, fail_on_noperm: bool) -> Option<ProcResult<T>> {
-    if let Err(PermissionDenied(_)) = result {
-        if fail_on_noperm {
-            Some(result)
-        } else {
+    match result {
+        Err(PermissionDenied(e)) => {
+            if fail_on_noperm {
+                Some(Err(PermissionDenied(e)))
+            } else {
+                None
+            }
+        }
+        Err(NotFound(Some(pathbuf))) => {
+            warn!("\"{}\" not found. The process may have exited before I could get its details. Ignoring.",
+                pathbuf.display());
             None
         }
-    } else if let Err(NotFound(Some(pathbuf))) = result {
-        warn!("\"{}\" not found. The process may have exited before I could get its details. Ignoring.",
-            pathbuf.display());
-        None
-    } else {
-        Some(result)
+        other => Some(other),
     }
 }
 
@@ -151,39 +178,15 @@ pub fn get_processes(
     fail_on_noperm: bool,
 ) -> ProcResult<Vec<ProcNode>> {
     // https://users.rust-lang.org/t/std-id-vs-libc-pid-t-how-to-handle/78281
-    let me = TryInto::<i32>::try_into(std::process::id()).unwrap();
     let all_processes = process::all_processes()?;
-    let mut proc_tree = all_processes
+    let mut proc_tree: Vec<ProcNode> = all_processes
         .filter_map(|proc_result| {
-            let result = proc_result.and_then(|process| {
-                process.stat().and_then(|stat| {
-                    let pid = stat.pid;
-                    if !match_self && pid == me {
-                        return Ok(None);
-                    }
-                    let ppid = stat.ppid;
-                    process.cmdline().map(|c| {
-                        let cmdline = c // TODO: why is process.cmdline() a Vec<String>?
-                            .into_iter()
-                            .fold("".to_owned(), |acc, val| acc + " " + &val);
-                        Some(ProcResult::Ok(ProcNode {
-                            pid,
-                            ppid,
-                            cmdline,
-                            process,
-                            children: vec![],
-                        }))
-                    })
-                })
-            }); // This should probably be illegal
-
-            match filter_errors(result, fail_on_noperm) {
-                Some(Ok(tuple)) => tuple,
-                Some(Err(e)) => Some(Err(e)),
-                None => None,
-            }
+            let result = proc_result
+                .and_then(|process| ProcNode::try_from_process(process, match_self))
+                .transpose()?;
+            filter_errors(result, fail_on_noperm)
         })
-        .collect::<ProcResult<Vec<ProcNode>>>()?; // TODO: un-haskellize this (sorry, I got curried away)
+        .collect::<ProcResult<_>>()?;
     let Some(regex) = regex else {
         return Ok(proc_tree);
     };
@@ -241,13 +244,12 @@ pub fn get_processes(
 
 pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<ProcListing>> {
     processes.into_iter().filter_map(|proc_node| {
-        let ProcNode { pid, ppid, cmdline, process, .. } = proc_node;
-        let maps_result = filter_errors(process.smaps(), fail_on_noperm);
+        let ProcNode { pid, ppid, cmdline, process, exe, .. } = proc_node;
+        let maps_result = filter_errors(process.smaps(), fail_on_noperm)?;
         let maps = match maps_result {
-            Some(Ok(maps)) => maps,
-            Some(Err(e)) => return Some(Err(e)),
-            None => return None,
-        };
+            Ok(maps) => maps,
+            Err(e) => return Some(Err(e)),
+        }; // TODO: moar elegance
         let mut memory_ext = MemoryExt::new();
         for map in maps {
             let path = &map.pathname;
@@ -275,13 +277,11 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
             };
             match path {
                 Path(pathbuf) => {
-                    let exe_result = filter_errors(process.exe(), fail_on_noperm);
-                    let exe = match exe_result {
-                        Some(Ok(exe)) => exe,
-                        Some(Err(e)) => return Some(Err(e)),
-                        None => return None,
-                    };
                     let pss = get_pss_or_warn("file-backed map");
+
+                    let entry = memory_ext.file_map.entry((pathbuf.clone(), map.perms)).or_default();
+                    *entry += pss;
+
                     let is_self = exe == *pathbuf;
                     let perms = map.perms;
                     let is_x = perms.contains(MMPermissions::EXECUTE);
@@ -324,6 +324,6 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
                 },
             } // end match
         } // end for map in maps
-        Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }))
+        Some(Ok(ProcListing { pid, ppid, cmdline, exe, memory_ext }))
     }).collect()
 }
