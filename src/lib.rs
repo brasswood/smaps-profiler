@@ -26,7 +26,6 @@ pub struct ProcNode {
     pub pid: i32,
     pub ppid: i32,
     pub cmdline: String,
-    pub exe: PathBuf,
     pub process: Process,
     pub children: Vec<usize>,
 }
@@ -45,7 +44,6 @@ impl ProcNode {
             pid,
             ppid: stat.ppid,
             cmdline: process.cmdline()?.join(" "),
-            exe: process.exe()?,
             process,
             children: vec![],
         }))
@@ -244,12 +242,17 @@ pub fn get_processes(
 
 pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<ProcListing>> {
     processes.into_iter().filter_map(|proc_node| {
-        let ProcNode { pid, ppid, cmdline, process, exe, .. } = proc_node;
+        let ProcNode { pid, ppid, cmdline, process, .. } = proc_node;
         let maps_result = filter_errors(process.smaps(), fail_on_noperm)?;
         let maps = match maps_result {
             Ok(maps) => maps,
             Err(e) => return Some(Err(e)),
         }; // TODO: moar elegance
+        let exe_result = filter_errors(process.exe(), fail_on_noperm)?;
+        let exe = match exe_result {
+            Ok(exe) => exe,
+            Err(e) => return Some(Err(e)),
+        };
         let mut memory_ext = MemoryExt::new();
         for map in maps {
             let path = &map.pathname;
