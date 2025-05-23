@@ -62,7 +62,8 @@ pub struct ProcListing {
 ///Almost the same as procfs::process::MMapPath. A dictionary key that will allow us to aggregate the maps of a process by their (Path, Permissions).
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MemCategory {
-    File(PathBuf, MMPermissions),
+    SelfFile(PathBuf, MMPermissions),
+    OtherFile(PathBuf, MMPermissions),
     Heap,
     Stack,
     TStack,
@@ -75,36 +76,19 @@ pub enum MemCategory {
 }
 
 #[derive(Debug, Default)]
-pub struct MemoryExt {
-    map: HashMap<MemCategory, u64>,
-    bin_text_pss: u64,
-    lib_text_pss: u64,
-    bin_data_pss: u64,
-    lib_data_pss: u64,
-}
+pub struct MemoryExt(HashMap<MemCategory, u64>);
 
 impl MemoryExt {
     pub fn new() -> MemoryExt {
         MemoryExt::default()
     }
 
-    pub fn add_at(&mut self, field: MemCategory, pss: u64, exe: &PathBuf) {
-        if let MemCategory::File(path, perms) = &field {
-            let is_self = *exe == *path;
-            let is_x = perms.contains(MMPermissions::EXECUTE);
-            let field = match (is_self, is_x) {
-                (true, true) => &mut self.bin_text_pss,
-                (true, false) => &mut self.bin_data_pss,
-                (false, true) => &mut self.lib_text_pss,
-                (false, false) => &mut self.lib_data_pss,
-            };
-            *field += pss;
-        }
-        add_at(&mut self.map, field, pss);
+    pub fn add_at(&mut self, field: MemCategory, pss: u64) {
+        add_at(&mut self.0, field, pss);
     }
 
     pub fn get(&self, field: &MemCategory) -> Option<&u64> {
-        self.map.get(field)
+        self.0.get(field)
     }
 }
 
@@ -112,13 +96,7 @@ impl Add<&MemoryExt> for MemoryExt {
     type Output = MemoryExt;
 
     fn add(self, rhs: &MemoryExt) -> MemoryExt {
-        MemoryExt {
-            map: add_maps(self.map, &rhs.map),
-            bin_text_pss: self.bin_text_pss + rhs.bin_text_pss,
-            lib_text_pss: self.lib_text_pss + rhs.lib_text_pss,
-            bin_data_pss: self.bin_data_pss + rhs.bin_data_pss,
-            lib_data_pss: self.lib_data_pss + rhs.lib_data_pss,
-        }
+        MemoryExt (add_maps(self.0, &rhs.0))
     }
 }
 
@@ -276,7 +254,14 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
                 }
             };
             let (category, label) = match &map.pathname {
-                Path(p) => (MemCategory::File(p.clone(), map.perms), "file-backed map".to_string()),
+                Path(p) => (
+                    if *p == exe {
+                        MemCategory::SelfFile(p.clone(), map.perms)
+                    } else {
+                        MemCategory::OtherFile(p.clone(), map.perms)
+                    }, 
+                    "file-backed map".to_string()
+                ),
                 Heap => (MemCategory::Heap, "heap".to_string()),
                 Stack => (MemCategory::Stack, "stack".to_string()),
                 TStack(tid) => (MemCategory::TStack, format!("thread {tid} stack")),
@@ -306,7 +291,7 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
                 },
             };
             let pss = get_pss_or_warn(label);
-            memory_ext.add_at(category, pss, &exe);
+            memory_ext.add_at(category, pss);
         } // end for map in maps
         Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }))
     }).collect()
