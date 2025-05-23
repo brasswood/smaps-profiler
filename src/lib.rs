@@ -22,6 +22,7 @@ use std::hash::{Hash, RandomState};
 use std::ops::Add;
 use std::path::PathBuf;
 
+#[derive(Debug)]
 pub struct ProcNode {
     pub pid: i32,
     pub ppid: i32,
@@ -49,14 +50,16 @@ impl ProcNode {
         }))
     }
 }
+
+#[derive(Debug)]
 pub struct ProcListing {
     pub pid: i32,
     pub ppid: i32,
     pub cmdline: String,
-    pub exe: PathBuf,
     pub memory_ext: MemoryExt,
 }
 
+#[derive(Debug, Default)]
 pub struct MemoryExt {
     pub stack_pss: u64,
     pub heap_pss: u64,
@@ -76,28 +79,7 @@ pub struct MemoryExt {
 
 impl MemoryExt {
     pub fn new() -> MemoryExt {
-        MemoryExt {
-            stack_pss: 0,
-            heap_pss: 0,
-            thread_stack_pss: 0,
-            file_map: HashMap::new(),
-            bin_text_pss: 0,
-            lib_text_pss: 0,
-            bin_data_pss: 0,
-            lib_data_pss: 0,
-            anon_map_pss: 0,
-            vdso_pss: 0,
-            vvar_pss: 0,
-            vsyscall_pss: 0,
-            vsys_pss: 0,
-            other_map: HashMap::new(),
-        }
-    }
-}
-
-impl Default for MemoryExt {
-    fn default() -> Self {
-        Self::new()
+        MemoryExt::default()
     }
 }
 
@@ -327,6 +309,6 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
                 },
             } // end match
         } // end for map in maps
-        Some(Ok(ProcListing { pid, ppid, cmdline, exe, memory_ext }))
+        Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }))
     }).collect()
 }
