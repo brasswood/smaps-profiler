@@ -14,7 +14,7 @@
  */
 
 use log::warn;
-use procfs::process::{self, MMPermissions, MMapPath::*, Process};
+use procfs::process::{self, MMPermissions, MMapPath::{self, *}, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
 use std::collections::{HashMap, HashSet};
@@ -59,40 +59,53 @@ pub struct ProcListing {
     pub memory_ext: MemoryExt,
 }
 
+///Almost the same as procfs::process::MMapPath. A dictionary key that will allow us to aggregate the maps of a process by their (Path, Permissions).
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum MemCategory {
+    File(PathBuf, MMPermissions),
+    Heap,
+    Stack,
+    TStack,
+    Vdso,
+    Vvar,
+    Vsyscall,
+    Anonymous,
+    Vsys,
+    Other(String)
+}
+
 #[derive(Debug, Default)]
 pub struct MemoryExt {
-    pub stack_pss: u64,
-    pub heap_pss: u64,
-    pub thread_stack_pss: u64,
-    pub file_map: HashMap<(PathBuf, MMPermissions), u64>,
-    pub bin_text_pss: u64,
-    pub lib_text_pss: u64,
-    pub bin_data_pss: u64,
-    pub lib_data_pss: u64,
-    pub anon_map_pss: u64,
-    pub vdso_pss: u64,
-    pub vvar_pss: u64,
-    pub vsyscall_pss: u64,
-    pub vsys_pss: u64,
-    pub other_map: HashMap<String, u64>,
+    map: HashMap<MemCategory, u64>,
+    bin_text_pss: u64,
+    lib_text_pss: u64,
+    bin_data_pss: u64,
+    lib_data_pss: u64,
 }
 
 impl MemoryExt {
     pub fn new() -> MemoryExt {
         MemoryExt::default()
     }
-}
 
-fn add_maps<K, V>(mut lhs: HashMap<K, V>, rhs: &HashMap<K, V>) -> HashMap<K, V>
-where
-    K: Eq + Hash + Clone,
-    V: Add<Output = V> + Default + Clone,
-{
-    for (k, v) in rhs {
-        let entry = lhs.entry(k.clone()).or_default();
-        *entry = entry.clone() + v.clone();
+    pub fn add_at(&mut self, field: MemCategory, pss: u64, exe: &PathBuf) {
+        if let MemCategory::File(path, perms) = &field {
+            let is_self = *exe == *path;
+            let is_x = perms.contains(MMPermissions::EXECUTE);
+            let field = match (is_self, is_x) {
+                (true, true) => &mut self.bin_text_pss,
+                (true, false) => &mut self.bin_data_pss,
+                (false, true) => &mut self.lib_text_pss,
+                (false, false) => &mut self.lib_data_pss,
+            };
+            *field += pss;
+        }
+        add_at(&mut self.map, field, pss);
     }
-    lhs
+
+    pub fn get(&self, field: &MemCategory) -> Option<&u64> {
+        self.map.get(field)
+    }
 }
 
 impl Add<&MemoryExt> for MemoryExt {
@@ -100,32 +113,36 @@ impl Add<&MemoryExt> for MemoryExt {
 
     fn add(self, rhs: &MemoryExt) -> MemoryExt {
         MemoryExt {
-            stack_pss: self.stack_pss + rhs.stack_pss,
-            heap_pss: self.heap_pss + rhs.heap_pss,
-            thread_stack_pss: self.thread_stack_pss + rhs.thread_stack_pss,
-            file_map: add_maps(self.file_map, &rhs.file_map),
+            map: add_maps(self.map, &rhs.map),
             bin_text_pss: self.bin_text_pss + rhs.bin_text_pss,
             lib_text_pss: self.lib_text_pss + rhs.lib_text_pss,
             bin_data_pss: self.bin_data_pss + rhs.bin_data_pss,
             lib_data_pss: self.lib_data_pss + rhs.lib_data_pss,
-            anon_map_pss: self.anon_map_pss + rhs.anon_map_pss,
-            vdso_pss: self.vdso_pss + rhs.vdso_pss,
-            vvar_pss: self.vvar_pss + rhs.vvar_pss,
-            vsyscall_pss: self.vsyscall_pss + rhs.vvar_pss,
-            vsys_pss: self.vsys_pss + rhs.vsys_pss,
-            other_map: add_maps(self.other_map, &rhs.other_map),
         }
     }
 }
-/*
-impl Add<&MemoryExt> for MemoryExt {
-    type Output = MemoryExt;
 
-    fn add(self, rhs: &MemoryExt) -> MemoryExt {
-        &self + rhs
+fn add_maps<K, V, A>(mut lhs: HashMap<K, V>, rhs: &HashMap<K, A>) -> HashMap<K, V>
+where
+    K: Eq + Hash + Clone,
+    V: Add<A, Output = V> + Default + Clone,
+    A: Clone,
+{
+    for (k, v) in rhs {
+        add_at(&mut lhs, k.clone(), v.clone());
     }
+    lhs
 }
-*/
+
+fn add_at<K, V, A>(map: &mut HashMap<K,V>, k: K, a: A)
+where
+    K: Eq + Hash,
+    V: Add<A, Output = V> + Default + Clone,
+    A: Clone,
+{
+    let entry = map.entry(k).or_default();
+    *entry = entry.clone() + a;
+}
 
 fn filter_errors<T>(result: ProcResult<T>, fail_on_noperm: bool) -> Option<ProcResult<T>> {
     match result {
@@ -237,9 +254,7 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
         };
         let mut memory_ext = MemoryExt::new();
         for map in maps {
-            let path = &map.pathname;
-            // https://users.rust-lang.org/t/lazy-evaluation-in-pattern-matching/127565/2
-            let get_pss_or_warn = |map_type: &str| {
+            let get_pss_or_warn = |map_type: String| {
                 if let Some(&pss) = map.extension.map.get("Pss") {
                     pss
                 } else if let Some(&rss) = map.extension.map.get("Rss") {
@@ -260,36 +275,17 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
                     0
                 }
             };
-            match path {
-                Path(pathbuf) => {
-                    let pss = get_pss_or_warn("file-backed map");
-
-                    let entry = memory_ext.file_map.entry((pathbuf.clone(), map.perms)).or_default();
-                    *entry += pss;
-
-                    let is_self = exe == *pathbuf;
-                    let perms = map.perms;
-                    let is_x = perms.contains(MMPermissions::EXECUTE);
-                    let field = match (is_self, is_x) {
-                        (true, true) => &mut memory_ext.bin_text_pss,
-                        (true, false) => &mut memory_ext.bin_data_pss,
-                        (false, true) => &mut memory_ext.lib_text_pss,
-                        (false, false) => &mut memory_ext.lib_data_pss,
-                    };
-                    *field += pss;
-                },
-                Heap => memory_ext.heap_pss += get_pss_or_warn("heap"),
-                Stack => memory_ext.stack_pss += get_pss_or_warn("stack"),
-                TStack(tid) => memory_ext.thread_stack_pss += get_pss_or_warn(&format!("thread {} stack", tid)),
-                Anonymous => memory_ext.anon_map_pss += get_pss_or_warn("anonymous map"),
-                Vdso => memory_ext.vdso_pss += get_pss_or_warn("vdso"),
-                Vvar => memory_ext.vvar_pss += get_pss_or_warn("vvar"),
-                Vsyscall => memory_ext.vsyscall_pss += get_pss_or_warn("vsyscall"),
-                Vsys(_) => memory_ext.vsys_pss += get_pss_or_warn("shared memory segment (key {})"),
-                Other(path) => {
-                    let pss = get_pss_or_warn(&format!("other path {}", path));
-                    *memory_ext.other_map.entry(path.clone()).or_insert(0) += pss;
-                },
+            let (category, label) = match &map.pathname {
+                Path(p) => (MemCategory::File(p.clone(), map.perms), "file-backed map".to_string()),
+                Heap => (MemCategory::Heap, "heap".to_string()),
+                Stack => (MemCategory::Stack, "stack".to_string()),
+                TStack(tid) => (MemCategory::TStack, format!("thread {tid} stack")),
+                Vdso => (MemCategory::Vdso, "vdso".to_string()),
+                Vvar => (MemCategory::Vvar, "vvar".to_string()),
+                Vsyscall => (MemCategory::Vsyscall, "vsyscall".to_string()),
+                Anonymous => (MemCategory::Anonymous, "anonymous map".to_string()),
+                Vsys(key) => (MemCategory::Vsys, format!("shared memory segment (key {key})")),
+                Other(s) => (MemCategory::Other(s.clone()), s.clone()),
                 _ => {
                     let Some(&rss) = map.extension.map.get("Rss") else {
                         warn!("I don't know how to classify this map, and it doesn't have a RSS field.\
@@ -301,14 +297,25 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
                         warn!("I don't know how to classify this map, but at least its RSS is 0.\
                             \n  The process is {1} {2}\
                             \n  The map is {0:?}", map, pid, cmdline);
+                        continue;
                     } else {
                         panic!("FATAL: I don't know how to classify this map, and its RSS is not 0.\
                             \n  The process is {1} {2}\
                             \n  The map is {0:?}", map, pid, cmdline);
                     }
                 },
-            } // end match
+            };
+            let pss = get_pss_or_warn(label);
+            memory_ext.add_at(category, pss, &exe);
         } // end for map in maps
         Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }))
     }).collect()
+}
+
+pub fn sum_memory(processes: &[ProcListing]) -> MemoryExt {
+    processes
+        .iter()
+        .fold(MemoryExt::new(), |acc, proc_listing| {
+            acc + &proc_listing.memory_ext
+        })
 }
