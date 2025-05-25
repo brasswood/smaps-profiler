@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use untitled_smaps_poller::{get_processes, get_smaps, sum_memory, MemoryExt, ProcListing};
+use untitled_smaps_poller::{get_processes, get_smaps, sum_memory, MemoryExt, ProcListing, MemCategory::*};
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
 // compared to smaps_rollup. Gotta figure out why.
@@ -230,6 +230,10 @@ fn print_processes(processes: &Vec<ProcListing>) {
             memory_ext,
             ..
         } = proc_listing;
+        let stack = memory_ext.get(Stack).unwrap();
+        let heap = memory_ext.get(Heap).unwrap();
+        let thread_stack = memory_ext.get(TStack).unwrap();
+        let 
         println!("{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{cmdline}");
     }
 }
