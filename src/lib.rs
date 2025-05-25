@@ -381,6 +381,7 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
         };
         let mut memory_ext = MemoryExt::new();
         for map in maps {
+            // TODO: with new api, this probably no longer needs to be a closure
             let get_pss_or_warn = |map_type: String| {
                 if let Some(&pss) = map.extension.map.get("Pss") {
                     pss
