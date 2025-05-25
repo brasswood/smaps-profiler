@@ -13,17 +13,18 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use crate::ConstMemCategory::*;
+use crate::Entry::*;
+use crate::MemCategory::*;
 use log::warn;
 use procfs::process::{self, MMPermissions, MMapPath, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
-use strum::{EnumCount, EnumIter, IntoEnumIterator};
 use std::collections::{hash_map, HashMap, HashSet};
 use std::hash::{Hash, RandomState};
 use std::ops::Add;
 use std::path::PathBuf;
-use crate::MemCategory::*;
-use crate::Entry::*;
+use strum::{EnumCount, EnumIter, IntoEnumIterator};
 
 #[derive(Debug)]
 pub struct ProcNode {
@@ -62,25 +63,24 @@ pub struct ProcListing {
     pub memory_ext: MemoryExt,
 }
 
-///Almost the same as procfs::process::MMapPath. A dictionary key that will allow us to aggregate the maps of a process by their (Path, Permissions).
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct FileMapping {
+    pub is_self: bool,
+    pub path: PathBuf,
+    pub perms: MMPermissions,
+}
+
+///Almost the same as procfs::process::MMapPath. A dictionary key that will allow us to aggregate the maps of a process by their (Path, Permissions).
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MemCategory {
-    SelfFile(PathBuf, MMPermissions),
-    OtherFile(PathBuf, MMPermissions),
-    Heap,
-    Stack,
-    TStack,
-    Vdso,
-    Vvar,
-    Vsyscall,
-    Anonymous,
-    Vsys,
-    Other(String)
+    File(FileMapping),
+    Const(ConstMemCategory),
+    Other(String),
 }
 
-#[derive(Clone, Debug, EnumCount, EnumIter, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, EnumCount, EnumIter, Eq, PartialEq)]
 #[repr(usize)]
-enum ConstMemCategory {
+pub enum ConstMemCategory {
     Heap,
     Stack,
     TStack,
@@ -91,21 +91,7 @@ enum ConstMemCategory {
     Vsys,
 }
 
-impl ConstMemCategory {
-    fn as_pub_category(&self) -> MemCategory {
-        match self {
-            ConstMemCategory::Heap => Heap,
-            ConstMemCategory::Stack => Stack,
-            ConstMemCategory::TStack => TStack,
-            ConstMemCategory::Vdso => Vdso,
-            ConstMemCategory::Vvar => Vvar,
-            ConstMemCategory::Vsyscall => Vsyscall,
-            ConstMemCategory::Anonymous => Anonymous,
-            ConstMemCategory::Vsys => Vsys,
-        }
-    }
-}
-
+#[derive(Debug)]
 pub enum Entry<'a> {
     Occupied(OccupiedEntry<'a>),
     Vacant(VacantEntry<'a>),
@@ -125,19 +111,29 @@ impl<'a> Entry<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct OccupiedEntry<'a>(&'a mut u64);
+#[derive(Debug)]
 pub struct VacantEntry<'a>(VacantKind<'a>);
 
+#[derive(Debug)]
 enum VacantKind<'a> {
-    File(hash_map::VacantEntry<'a, (bool, PathBuf, MMPermissions), u64>),
+    File(hash_map::VacantEntry<'a, FileMapping, u64>),
     Other(hash_map::VacantEntry<'a, String, u64>),
 }
 
 #[derive(Debug, Default)]
 pub struct MemoryExt {
-    const_map: [u64; ConstMemCategory::COUNT],
-    file_map: HashMap<(bool, PathBuf, MMPermissions), u64>,
-    other_map: HashMap<String, u64>,
+    pub const_map: [u64; ConstMemCategory::COUNT],
+    pub file_map: HashMap<FileMapping, u64>,
+    pub other_map: HashMap<String, u64>,
+}
+
+pub struct FileCategoryTotals {
+    pub bin_text: u64,
+    pub lib_text: u64,
+    pub bin_data: u64,
+    pub lib_data: u64,
 }
 
 impl MemoryExt {
@@ -147,31 +143,14 @@ impl MemoryExt {
 
     pub fn entry(&mut self, field: MemCategory) -> Entry {
         match field {
-            SelfFile(path, perms) => {
-                match self.file_map.entry((true, path, perms)) {
-                    hash_map::Entry::Occupied(o) => Occupied(OccupiedEntry(o.into_mut())),
-                    hash_map::Entry::Vacant(v) => Vacant(VacantEntry(VacantKind::File(v))),
-                }
+            File(f) => match self.file_map.entry(f) {
+                hash_map::Entry::Occupied(o) => Occupied(OccupiedEntry(o.into_mut())),
+                hash_map::Entry::Vacant(v) => Vacant(VacantEntry(VacantKind::File(v))),
             },
-            OtherFile(path, perms) => {
-                match self.file_map.entry((false, path, perms)) {
-                    hash_map::Entry::Occupied(o) => Occupied(OccupiedEntry(o.into_mut())),
-                    hash_map::Entry::Vacant(v) => Vacant(VacantEntry(VacantKind::File(v))),
-                }
-            },
-            Heap => Occupied(OccupiedEntry(&mut self.const_map[ConstMemCategory::Heap as usize])),
-            Stack => Occupied(OccupiedEntry(&mut self.const_map[ConstMemCategory::Stack as usize])),
-            TStack => Occupied(OccupiedEntry(&mut self.const_map[ConstMemCategory::TStack as usize])),
-            Vdso => Occupied(OccupiedEntry(&mut self.const_map[ConstMemCategory::Vdso as usize])),
-            Vvar => Occupied(OccupiedEntry(&mut self.const_map[ConstMemCategory::Vvar as usize])),
-            Vsyscall => Occupied(OccupiedEntry(&mut self.const_map[ConstMemCategory::Vsyscall as usize])),
-            Anonymous => Occupied(OccupiedEntry(&mut self.const_map[ConstMemCategory::Anonymous as usize])),
-            Vsys => Occupied(OccupiedEntry(&mut self.const_map[ConstMemCategory::Vsys as usize])),
-            Other(s) => {
-                match self.other_map.entry(s) {
-                    hash_map::Entry::Occupied(o) => Occupied(OccupiedEntry(o.into_mut())),
-                    hash_map::Entry::Vacant(v) => Vacant(VacantEntry(VacantKind::Other(v))),
-                }
+            Const(c) => Occupied(OccupiedEntry(&mut self.const_map[c as usize])),
+            Other(s) => match self.other_map.entry(s) {
+                hash_map::Entry::Occupied(o) => Occupied(OccupiedEntry(o.into_mut())),
+                hash_map::Entry::Vacant(v) => Vacant(VacantEntry(VacantKind::Other(v))),
             },
         }
     }
@@ -182,27 +161,68 @@ impl MemoryExt {
 
     pub fn get(&self, field: MemCategory) -> Option<&u64> {
         match field {
-            SelfFile(path, perms) => self.file_map.get(&(true, path, perms)),
-            OtherFile(path, perms) => self.file_map.get(&(false, path, perms)),
-            Heap => self.const_map.get(ConstMemCategory::Heap as usize),
-            Stack => self.const_map.get(ConstMemCategory::Stack as usize),
-            TStack => self.const_map.get(ConstMemCategory::TStack as usize),
-            Vdso => self.const_map.get(ConstMemCategory::Vdso as usize),
-            Vvar => self.const_map.get(ConstMemCategory::Vvar as usize),
-            Vsyscall => self.const_map.get(ConstMemCategory::Vsyscall as usize),
-            Anonymous => self.const_map.get(ConstMemCategory::Anonymous as usize),
-            Vsys => self.const_map.get(ConstMemCategory::Vsys as usize),
+            File(f) => self.file_map.get(&f),
+            Const(c) => self.const_map.get(c as usize),
             Other(s) => self.other_map.get(&s),
         }
     }
 
+    // Why this method instead of memory_ext.const_map[Stack as usize]? Because I don't want to type as usize all the time
+    pub fn get_const(&self, field: ConstMemCategory) -> &u64 {
+        &self.const_map[field as usize]
+    }
+
+    pub fn get_const_mut(&mut self, field: ConstMemCategory) -> &mut u64 {
+        &mut self.const_map[field as usize]
+    }
+
     pub fn iter(&self) -> impl Iterator + use<'_> {
         ConstMemCategory::iter()
-            .map(|c| (c.as_pub_category(), self.const_map[c as usize]))
-            .chain(self.file_map.iter().map(|((is_self, path, perms), pss)|
-                (if *is_self { SelfFile(path.clone(), perms.clone()) } else { OtherFile(path.clone(), perms.clone()) }, *pss)
-            ))
-            .chain(self.other_map.iter().map(|(s, pss)| (Other(s.clone()), *pss)))
+            .map(|c| (Const(c), &self.const_map[c as usize]))
+            .chain(self.file_map.iter().map(|(f, pss)| (File(f.clone()), pss)))
+            .chain(
+                self.other_map
+                    .iter()
+                    .map(|(s, pss)| (Other(s.clone()), pss)),
+            )
+    }
+
+    pub fn aggregate_file_maps(&self) -> FileCategoryTotals {
+        let mut bin_text = 0;
+        let mut lib_text = 0;
+        let mut bin_data = 0;
+        let mut lib_data = 0;
+        for (f, pss) in &self.file_map {
+            let field = match f {
+                FileMapping {
+                    is_self: true,
+                    path: _,
+                    perms,
+                } if perms.contains(MMPermissions::EXECUTE) => &mut bin_text,
+                FileMapping {
+                    is_self: true,
+                    path: _,
+                    perms: _,
+                } => &mut bin_data,
+                FileMapping {
+                    is_self: false,
+                    path: _,
+                    perms,
+                } if perms.contains(MMPermissions::EXECUTE) => &mut lib_text,
+                FileMapping {
+                    is_self: false,
+                    path: _,
+                    perms: _,
+                } => &mut lib_data,
+            };
+            *field += pss;
+        }
+        FileCategoryTotals {
+            bin_text,
+            lib_text,
+            bin_data,
+            lib_data,
+        }
     }
 }
 
@@ -241,7 +261,7 @@ where
     lhs
 }
 
-fn add_at<K, V, A>(map: &mut HashMap<K,V>, k: K, a: A)
+fn add_at<K, V, A>(map: &mut HashMap<K, V>, k: K, a: A)
 where
     K: Eq + Hash,
     V: Add<A, Output = V> + Default + Clone,
@@ -384,21 +404,17 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
             };
             let (category, label) = match &map.pathname {
                 MMapPath::Path(p) => (
-                    if *p == exe {
-                        SelfFile(p.clone(), map.perms)
-                    } else {
-                        OtherFile(p.clone(), map.perms)
-                    }, 
+                    File(FileMapping{ is_self: *p == exe, path: p.clone(), perms: map.perms }),
                     "file-backed map".to_string()
                 ),
-                MMapPath::Heap => (Heap, "heap".to_string()),
-                MMapPath::Stack => (Stack, "stack".to_string()),
-                MMapPath::TStack(tid) => (TStack, format!("thread {tid} stack")),
-                MMapPath::Vdso => (Vdso, "vdso".to_string()),
-                MMapPath::Vvar => (Vvar, "vvar".to_string()),
-                MMapPath::Vsyscall => (Vsyscall, "vsyscall".to_string()),
-                MMapPath::Anonymous => (Anonymous, "anonymous map".to_string()),
-                MMapPath::Vsys(key) => (Vsys, format!("shared memory segment (key {key})")),
+                MMapPath::Heap => (Const(Heap), "heap".to_string()),
+                MMapPath::Stack => (Const(Stack), "stack".to_string()),
+                MMapPath::TStack(tid) => (Const(TStack), format!("thread {tid} stack")),
+                MMapPath::Vdso => (Const(Vdso), "vdso".to_string()),
+                MMapPath::Vvar => (Const(Vvar), "vvar".to_string()),
+                MMapPath::Vsyscall => (Const(Vsyscall), "vsyscall".to_string()),
+                MMapPath::Anonymous => (Const(Anonymous), "anonymous map".to_string()),
+                MMapPath::Vsys(key) => (Const(Vsys), format!("shared memory segment (key {key})")),
                 MMapPath::Other(s) => (Other(s.clone()), s.clone()),
                 _ => {
                     let Some(&rss) = map.extension.map.get("Rss") else {

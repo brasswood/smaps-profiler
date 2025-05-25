@@ -13,7 +13,12 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use std::{collections::BinaryHeap, fs, io::{self, Write}, path::PathBuf};
+use std::{
+    collections::BinaryHeap,
+    fs,
+    io::{self, Write},
+    path::PathBuf,
+};
 
 use clap::Parser;
 use env_logger::Builder;
@@ -74,6 +79,6 @@ fn main() -> io::Result<()> {
 
 fn write_out<T: Write>(procs: Vec<ProcListing>, out: T) -> io::Result<()> {
     let summary = sum_memory(&procs);
-    let summary_stats: BinaryHeap<()>
+    let summary_stats: BinaryHeap<()>;
     Ok(())
 }
