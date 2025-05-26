@@ -193,27 +193,13 @@ impl MemoryExt {
         let mut bin_data = 0;
         let mut lib_data = 0;
         for (f, pss) in &self.file_map {
-            let field = match f {
-                FileMapping {
-                    is_self: true,
-                    path: _,
-                    perms,
-                } if perms.contains(MMPermissions::EXECUTE) => &mut bin_text,
-                FileMapping {
-                    is_self: true,
-                    path: _,
-                    perms: _,
-                } => &mut bin_data,
-                FileMapping {
-                    is_self: false,
-                    path: _,
-                    perms,
-                } if perms.contains(MMPermissions::EXECUTE) => &mut lib_text,
-                FileMapping {
-                    is_self: false,
-                    path: _,
-                    perms: _,
-                } => &mut lib_data,
+            let is_self = f.is_self;
+            let is_x = f.perms.contains(MMPermissions::EXECUTE);
+            let field = match (is_self, is_x) {
+                (false, false) => &mut lib_data,
+                (false, true) => &mut lib_text,
+                (true, false) => &mut bin_data,
+                (true, true) => &mut bin_text,
             };
             *field += pss;
         }
