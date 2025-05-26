@@ -109,21 +109,33 @@ impl MemoryExt {
     }
 
     pub fn iter(&self) -> impl Iterator + use<'_> {
-        iter::once((MemCategory::Stack, self.stack_pss))
-            .chain(iter::once((MemCategory::Heap, self.heap_pss)))
-            .chain(iter::once((MemCategory::TStack, self.thread_stack_pss)))
-            .chain(iter::once((MemCategory::Anonymous, self.anon_map_pss)))
-            .chain(iter::once((MemCategory::Vdso, self.vdso_pss)))
-            .chain(iter::once((MemCategory::Vvar, self.vvar_pss)))
-            .chain(iter::once((MemCategory::Vsyscall, self.vsyscall_pss)))
-            .chain(iter::once((MemCategory::Vsys, self.vsys_pss)))
+        let MemoryExt {
+            stack_pss,
+            heap_pss,
+            thread_stack_pss,
+            file_map,
+            anon_map_pss,
+            vdso_pss,
+            vvar_pss,
+            vsyscall_pss,
+            vsys_pss,
+            other_map,
+        } = self; // destructure self here so that I get a compiler error if fields change
+        iter::once((MemCategory::Stack, *stack_pss))
+            .chain(iter::once((MemCategory::Heap, *heap_pss)))
+            .chain(iter::once((MemCategory::TStack, *thread_stack_pss)))
+            .chain(iter::once((MemCategory::Anonymous, *anon_map_pss)))
+            .chain(iter::once((MemCategory::Vdso, *vdso_pss)))
+            .chain(iter::once((MemCategory::Vvar, *vvar_pss)))
+            .chain(iter::once((MemCategory::Vsyscall, *vsyscall_pss)))
+            .chain(iter::once((MemCategory::Vsys, *vsys_pss)))
             .chain(
-                self.file_map
+                file_map
                     .iter()
                     .map(|(f, pss)| (MemCategory::File(f.clone()), *pss)),
             )
             .chain(
-                self.other_map
+                other_map
                     .iter()
                     .map(|(s, pss)| (MemCategory::Other(s.clone()), *pss)),
             )
