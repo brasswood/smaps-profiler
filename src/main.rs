@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use untitled_smaps_poller::{get_processes, get_smaps, MemoryExt, ProcListing};
+use untitled_smaps_poller::{get_processes, get_smaps, FileCategoryTotals, MemoryExt, ProcListing};
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
 // compared to smaps_rollup. Gotta figure out why.
@@ -234,10 +234,6 @@ fn print_processes(processes: &Vec<ProcListing>) {
             stack_pss: stack,
             heap_pss: heap,
             thread_stack_pss: thread_stack,
-            bin_text_pss: bin_text,
-            lib_text_pss: lib_text,
-            bin_data_pss: bin_data,
-            lib_data_pss: lib_data,
             anon_map_pss: anon_map,
             vdso_pss: vdso,
             vvar_pss: vvar,
@@ -246,6 +242,12 @@ fn print_processes(processes: &Vec<ProcListing>) {
             other_map,
             ..
         } = memory_ext;
+        let FileCategoryTotals {
+            bin_text,
+            lib_text,
+            bin_data,
+            lib_data,
+        } = memory_ext.aggregate_file_maps();
         let other: u64 = other_map.values().sum();
         println!("{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{cmdline}");
     }
@@ -284,10 +286,16 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         stack_series.push(m.stack_pss);
         heap_series.push(m.heap_pss);
         thread_stack_series.push(m.thread_stack_pss);
-        bin_text_series.push(m.bin_text_pss);
-        lib_text_series.push(m.lib_text_pss);
-        bin_data_series.push(m.bin_data_pss);
-        lib_data_series.push(m.lib_data_pss);
+        let FileCategoryTotals {
+            bin_text,
+            lib_text,
+            bin_data,
+            lib_data,
+        } = m.aggregate_file_maps();
+        bin_text_series.push(bin_text);
+        lib_text_series.push(lib_text);
+        bin_data_series.push(bin_data);
+        lib_data_series.push(lib_data);
         anon_map_series.push(m.anon_map_pss);
         vdso_series.push(m.vdso_pss);
         vvar_series.push(m.vvar_pss);

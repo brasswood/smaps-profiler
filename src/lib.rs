@@ -77,6 +77,7 @@ pub enum MemCategory {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FileMapping {
+    pub is_self: bool,
     pub path: PathBuf,
     pub perms: MMPermissions,
 }
@@ -87,16 +88,19 @@ pub struct MemoryExt {
     pub heap_pss: u64,
     pub thread_stack_pss: u64,
     pub file_map: HashMap<FileMapping, u64>,
-    pub bin_text_pss: u64,
-    pub lib_text_pss: u64,
-    pub bin_data_pss: u64,
-    pub lib_data_pss: u64,
     pub anon_map_pss: u64,
     pub vdso_pss: u64,
     pub vvar_pss: u64,
     pub vsyscall_pss: u64,
     pub vsys_pss: u64,
     pub other_map: HashMap<String, u64>,
+}
+
+pub struct FileCategoryTotals {
+    pub bin_text: u64,
+    pub lib_text: u64,
+    pub bin_data: u64,
+    pub lib_data: u64,
 }
 
 impl MemoryExt {
@@ -115,6 +119,44 @@ impl MemoryExt {
             .chain(iter::once((MemCategory::Vsys, self.vsys_pss)))
             .chain(self.file_map.iter().map(|(f, pss)| (MemCategory::File(f.clone()), *pss)))
             .chain(self.other_map.iter().map(|(s, pss)| (MemCategory::Other(s.clone()), *pss)))
+    }
+
+    pub fn aggregate_file_maps(&self) -> FileCategoryTotals {
+        let mut bin_text = 0;
+        let mut lib_text = 0;
+        let mut bin_data = 0;
+        let mut lib_data = 0;
+        for (f, pss) in &self.file_map {
+            let field = match f {
+                FileMapping {
+                    is_self: true,
+                    path: _,
+                    perms,
+                } if perms.contains(MMPermissions::EXECUTE) => &mut bin_text,
+                FileMapping {
+                    is_self: true,
+                    path: _,
+                    perms: _,
+                } => &mut bin_data,
+                FileMapping {
+                    is_self: false,
+                    path: _,
+                    perms,
+                } if perms.contains(MMPermissions::EXECUTE) => &mut lib_text,
+                FileMapping {
+                    is_self: false,
+                    path: _,
+                    perms: _,
+                } => &mut lib_data,
+            };
+            *field += pss;
+        }
+        FileCategoryTotals {
+            bin_text,
+            lib_text,
+            bin_data,
+            lib_data,
+        }
     }
 }
 
@@ -139,10 +181,6 @@ impl Add<&MemoryExt> for MemoryExt {
             heap_pss: self.heap_pss + rhs.heap_pss,
             thread_stack_pss: self.thread_stack_pss + rhs.thread_stack_pss,
             file_map: add_maps(self.file_map, &rhs.file_map),
-            bin_text_pss: self.bin_text_pss + rhs.bin_text_pss,
-            lib_text_pss: self.lib_text_pss + rhs.lib_text_pss,
-            bin_data_pss: self.bin_data_pss + rhs.bin_data_pss,
-            lib_data_pss: self.lib_data_pss + rhs.lib_data_pss,
             anon_map_pss: self.anon_map_pss + rhs.anon_map_pss,
             vdso_pss: self.vdso_pss + rhs.vdso_pss,
             vvar_pss: self.vvar_pss + rhs.vvar_pss,
@@ -298,20 +336,8 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
             match path {
                 Path(pathbuf) => {
                     let pss = get_pss_or_warn("file-backed map");
-
-                    let entry = memory_ext.file_map.entry(FileMapping{ path: pathbuf.clone(), perms: map.perms }).or_default();
+                    let entry = memory_ext.file_map.entry(FileMapping{ is_self: exe == *pathbuf, path: pathbuf.clone(), perms: map.perms }).or_default();
                     *entry += pss;
-
-                    let is_self = exe == *pathbuf;
-                    let perms = map.perms;
-                    let is_x = perms.contains(MMPermissions::EXECUTE);
-                    let field = match (is_self, is_x) {
-                        (true, true) => &mut memory_ext.bin_text_pss,
-                        (true, false) => &mut memory_ext.bin_data_pss,
-                        (false, true) => &mut memory_ext.lib_text_pss,
-                        (false, false) => &mut memory_ext.lib_data_pss,
-                    };
-                    *field += pss;
                 },
                 Heap => memory_ext.heap_pss += get_pss_or_warn("heap"),
                 Stack => memory_ext.stack_pss += get_pss_or_warn("stack"),
