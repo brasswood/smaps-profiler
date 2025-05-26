@@ -72,7 +72,7 @@ pub enum MemCategory {
     Vsyscall,
     Anonymous,
     Vsys,
-    Other(String)
+    Other(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -108,7 +108,7 @@ impl MemoryExt {
         MemoryExt::default()
     }
 
-    pub fn iter(&self) -> impl Iterator  + use<'_> {
+    pub fn iter(&self) -> impl Iterator + use<'_> {
         iter::once((MemCategory::Stack, self.stack_pss))
             .chain(iter::once((MemCategory::Heap, self.heap_pss)))
             .chain(iter::once((MemCategory::TStack, self.thread_stack_pss)))
@@ -117,8 +117,16 @@ impl MemoryExt {
             .chain(iter::once((MemCategory::Vvar, self.vvar_pss)))
             .chain(iter::once((MemCategory::Vsyscall, self.vsyscall_pss)))
             .chain(iter::once((MemCategory::Vsys, self.vsys_pss)))
-            .chain(self.file_map.iter().map(|(f, pss)| (MemCategory::File(f.clone()), *pss)))
-            .chain(self.other_map.iter().map(|(s, pss)| (MemCategory::Other(s.clone()), *pss)))
+            .chain(
+                self.file_map
+                    .iter()
+                    .map(|(f, pss)| (MemCategory::File(f.clone()), *pss)),
+            )
+            .chain(
+                self.other_map
+                    .iter()
+                    .map(|(s, pss)| (MemCategory::Other(s.clone()), *pss)),
+            )
     }
 
     pub fn aggregate_file_maps(&self) -> FileCategoryTotals {
