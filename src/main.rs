@@ -236,13 +236,13 @@ fn print_processes(processes: &Vec<ProcListing>) {
             stack_pss: stack,
             heap_pss: heap,
             thread_stack_pss: thread_stack,
+            file_map: _file_map,
             anon_map_pss: anon_map,
             vdso_pss: vdso,
             vvar_pss: vvar,
             vsyscall_pss: vsyscall,
             vsys_pss: vsys,
             other_map,
-            ..
         } = memory_ext;
         let FileCategoryTotals {
             bin_text,
