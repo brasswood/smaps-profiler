@@ -29,7 +29,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use untitled_smaps_poller::{get_processes, get_smaps, FileCategoryTotals, MemoryExt, ProcListing};
+use untitled_smaps_poller::{
+    get_processes, get_smaps, sum_memory, FileCategoryTotals, MemoryExt, ProcListing,
+};
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
 // compared to smaps_rollup. Gotta figure out why.
@@ -251,14 +253,6 @@ fn print_processes(processes: &Vec<ProcListing>) {
         let other: u64 = other_map.values().sum();
         println!("{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{cmdline}");
     }
-}
-
-fn sum_memory(processes: &[ProcListing]) -> MemoryExt {
-    processes
-        .iter()
-        .fold(MemoryExt::new(), |acc, proc_listing| {
-            acc + &proc_listing.memory_ext
-        })
 }
 
 fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {

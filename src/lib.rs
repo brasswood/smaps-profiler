@@ -367,3 +367,11 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
         Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }))
     }).collect()
 }
+
+pub fn sum_memory(processes: &[ProcListing]) -> MemoryExt {
+    processes
+        .iter()
+        .fold(MemoryExt::new(), |acc, proc_listing| {
+            acc + &proc_listing.memory_ext
+        })
+}
