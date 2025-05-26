@@ -19,6 +19,7 @@ use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, RandomState};
+use std::iter;
 use std::ops::Add;
 use std::path::PathBuf;
 
@@ -59,12 +60,33 @@ pub struct ProcListing {
     pub memory_ext: MemoryExt,
 }
 
+///Almost the same as procfs::process::MMapPath. A dictionary key that will allow us to aggregate the maps of a process by their (Path, Permissions).
+#[derive(Clone, Debug)]
+pub enum MemCategory {
+    File(FileMapping),
+    Heap,
+    Stack,
+    TStack,
+    Vdso,
+    Vvar,
+    Vsyscall,
+    Anonymous,
+    Vsys,
+    Other(String)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct FileMapping {
+    pub path: PathBuf,
+    pub perms: MMPermissions,
+}
+
 #[derive(Debug, Default)]
 pub struct MemoryExt {
     pub stack_pss: u64,
     pub heap_pss: u64,
     pub thread_stack_pss: u64,
-    pub file_map: HashMap<(PathBuf, MMPermissions), u64>,
+    pub file_map: HashMap<FileMapping, u64>,
     pub bin_text_pss: u64,
     pub lib_text_pss: u64,
     pub bin_data_pss: u64,
@@ -80,6 +102,19 @@ pub struct MemoryExt {
 impl MemoryExt {
     pub fn new() -> MemoryExt {
         MemoryExt::default()
+    }
+
+    pub fn iter(&self) -> impl Iterator  + use<'_> {
+        iter::once((MemCategory::Stack, self.stack_pss))
+            .chain(iter::once((MemCategory::Heap, self.heap_pss)))
+            .chain(iter::once((MemCategory::TStack, self.thread_stack_pss)))
+            .chain(iter::once((MemCategory::Anonymous, self.anon_map_pss)))
+            .chain(iter::once((MemCategory::Vdso, self.vdso_pss)))
+            .chain(iter::once((MemCategory::Vvar, self.vvar_pss)))
+            .chain(iter::once((MemCategory::Vsyscall, self.vsyscall_pss)))
+            .chain(iter::once((MemCategory::Vsys, self.vsys_pss)))
+            .chain(self.file_map.iter().map(|(f, pss)| (MemCategory::File(f.clone()), *pss)))
+            .chain(self.other_map.iter().map(|(s, pss)| (MemCategory::Other(s.clone()), *pss)))
     }
 }
 
@@ -264,7 +299,7 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
                 Path(pathbuf) => {
                     let pss = get_pss_or_warn("file-backed map");
 
-                    let entry = memory_ext.file_map.entry((pathbuf.clone(), map.perms)).or_default();
+                    let entry = memory_ext.file_map.entry(FileMapping{ path: pathbuf.clone(), perms: map.perms }).or_default();
                     *entry += pss;
 
                     let is_self = exe == *pathbuf;
