@@ -304,9 +304,8 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
         };
         let mut memory_ext = MemoryExt::new();
         for map in maps {
-            let path = &map.pathname;
             // https://users.rust-lang.org/t/lazy-evaluation-in-pattern-matching/127565/2
-            let get_pss_or_warn = |map_type: &str| {
+            let get_pss_or_warn = |map_type: String| {
                 if let Some(&pss) = map.extension.map.get("Pss") {
                     pss
                 } else if let Some(&rss) = map.extension.map.get("Rss") {
@@ -327,24 +326,23 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
                     0
                 }
             };
-            match path {
-                Path(pathbuf) => {
-                    let pss = get_pss_or_warn("file-backed map");
-                    let entry = memory_ext.file_map.entry(FileMapping{ is_self: exe == *pathbuf, path: pathbuf.clone(), perms: map.perms }).or_default();
-                    *entry += pss;
-                },
-                Heap => memory_ext.heap_pss += get_pss_or_warn("heap"),
-                Stack => memory_ext.stack_pss += get_pss_or_warn("stack"),
-                TStack(tid) => memory_ext.thread_stack_pss += get_pss_or_warn(&format!("thread {} stack", tid)),
-                Anonymous => memory_ext.anon_map_pss += get_pss_or_warn("anonymous map"),
-                Vdso => memory_ext.vdso_pss += get_pss_or_warn("vdso"),
-                Vvar => memory_ext.vvar_pss += get_pss_or_warn("vvar"),
-                Vsyscall => memory_ext.vsyscall_pss += get_pss_or_warn("vsyscall"),
-                Vsys(_) => memory_ext.vsys_pss += get_pss_or_warn("shared memory segment (key {})"),
-                Other(path) => {
-                    let pss = get_pss_or_warn(&format!("other path {}", path));
-                    *memory_ext.other_map.entry(path.clone()).or_insert(0) += pss;
-                },
+            let (field, label) = match &map.pathname {
+                Path(pathbuf) => (
+                    memory_ext.file_map.entry(FileMapping{ is_self: exe == *pathbuf, path: pathbuf.clone(), perms: map.perms }).or_default(),
+                   "file-backed map".to_string()
+                ),
+                Heap => (&mut memory_ext.heap_pss, "heap".to_string()),
+                Stack => (&mut memory_ext.stack_pss, "stack".to_string()),
+                TStack(tid) => (&mut memory_ext.thread_stack_pss, format!("thread {tid} stack")),
+                Anonymous => (&mut memory_ext.anon_map_pss, "anonymous map".to_string()),
+                Vdso => (&mut memory_ext.vdso_pss, "vdso".to_string()),
+                Vvar => (&mut memory_ext.vvar_pss, "vvar".to_string()),
+                Vsyscall => (&mut memory_ext.vsyscall_pss, "vsyscall".to_string()),
+                Vsys(key) => (&mut memory_ext.vsys_pss, format!("shared memory segment (key {key})")),
+                Other(path) => (
+                    memory_ext.other_map.entry(path.clone()).or_insert(0),
+                    format!("other path {path}")
+                ),
                 _ => {
                     let Some(&rss) = map.extension.map.get("Rss") else {
                         warn!("I don't know how to classify this map, and it doesn't have a RSS field.\
@@ -356,13 +354,15 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
                         warn!("I don't know how to classify this map, but at least its RSS is 0.\
                             \n  The process is {1} {2}\
                             \n  The map is {0:?}", map, pid, cmdline);
+                        continue;
                     } else {
                         panic!("FATAL: I don't know how to classify this map, and its RSS is not 0.\
                             \n  The process is {1} {2}\
                             \n  The map is {0:?}", map, pid, cmdline);
                     }
                 },
-            } // end match
+            }; // end match
+            *field += get_pss_or_warn(label);
         } // end for map in maps
         Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }))
     }).collect()
