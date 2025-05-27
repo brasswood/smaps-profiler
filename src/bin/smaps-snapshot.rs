@@ -139,17 +139,15 @@ fn chop_str(s: &str, width: usize) -> Vec<String> {
     v
 }
 
-fn write_out<T, U, V>(
+fn write_out<T, U>(
     out: &mut T,
     mem: MemoryExt,
     width: usize,
     mut header_hook: U,
-    mut footer_hook: V,
 ) -> io::Result<()>
 where
     T: Write,
     U: FnMut(&mut T, usize) -> io::Result<()>,
-    V: FnMut(&mut T, usize) -> io::Result<()>,
 {
     let total_mem = mem.total();
     let mut fields: Vec<(MemCategory, u64)> = mem.iter().collect();
@@ -195,8 +193,7 @@ where
             writeln!(out, "{}{}", " ".repeat(width_nopath), chunk)?;
         }
     }
-    writeln!(out, "Total: {total_mem} bytes")?;
-    footer_hook(out, width)
+    writeln!(out, "Total: {total_mem} bytes")
 }
 
 fn write_out_all<T: Write>(
@@ -207,20 +204,21 @@ fn write_out_all<T: Write>(
     procs.sort_by(|a, b| b.memory_ext.total().cmp(&a.memory_ext.total()));
     let all = sum_memory(&procs);
     let header_hook = |out: &mut T, width| {
+        writeln!(out, "{}", "-".repeat(width))?;
         writeln!(out, "Summary (all processes)")?;
         writeln!(out, "{}", "-".repeat(width))
     };
-    let footer_hook = |out: &mut T, width| writeln!(out, "{}", "-".repeat(width));
-    write_out(out, all, width, header_hook, footer_hook)?;
+    write_out(out, all, width, header_hook)?;
     for proc in procs {
         let header_hook = |out: &mut T, width| {
-            let header = chop_str(&format!("(PID {}, {})", proc.pid, proc.cmdline), width);
+            let header = chop_str(&format!("PID {}\n{}", proc.pid, proc.cmdline), width);
+            writeln!(out, "{}", "-".repeat(width))?;
             for line in header {
                 writeln!(out, "{}", line)?;
             }
             writeln!(out, "{}", "-".repeat(width))
         };
-        write_out(out, proc.memory_ext, width, header_hook, footer_hook)?;
+        write_out(out, proc.memory_ext, width, header_hook)?;
     }
     Ok(())
 }
