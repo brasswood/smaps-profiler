@@ -233,7 +233,7 @@ fn write_out_all<T: Write>(
     let all = sum_memory(&procs);
     let header_hook = |out: &mut T, total, width| {
         let header = chop_str(
-            &format!("Summary (all processes)\nTotal: {total} bytes"),
+            &format!("Summary ({} processes)\nTotal: {total} bytes", procs.len()),
             width,
         );
         writeln!(out, "{}", "-".repeat(width))?;
