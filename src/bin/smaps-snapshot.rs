@@ -171,7 +171,7 @@ fn category_to_label(cat: MemCategory) -> String {
 fn write_out<T, U>(out: &mut T, mem: MemoryExt, width: usize, mut header_hook: U) -> io::Result<()>
 where
     T: Write,
-    U: FnMut(&mut T, usize) -> io::Result<()>,
+    U: FnMut(&mut T, u64, usize) -> io::Result<()>,
 {
     let total_mem = mem.total();
     let mut items: Vec<(u8, u64, Tag)> = Vec::new();
@@ -196,7 +196,7 @@ where
     let width_nopath = PERCENT + u64_digits + 2 * SEPS;
     let width = width.max(width_nopath + MIN_PATH);
     let path_width = width - width_nopath;
-    header_hook(out, width)?;
+    header_hook(out, total_mem, width)?;
     let mut small_header_printed = false;
     for (percent, pss, tag) in items {
         let label;
@@ -221,7 +221,7 @@ where
             writeln!(out, "{}{}", " ".repeat(width_nopath), chunk)?;
         }
     }
-    writeln!(out, "Total: {total_mem} bytes")
+    Ok(())
 }
 
 fn write_out_all<T: Write>(
@@ -231,15 +231,24 @@ fn write_out_all<T: Write>(
 ) -> io::Result<()> {
     procs.sort_by(|a, b| b.memory_ext.total().cmp(&a.memory_ext.total()));
     let all = sum_memory(&procs);
-    let header_hook = |out: &mut T, width| {
+    let header_hook = |out: &mut T, total, width| {
+        let header = chop_str(
+            &format!("Summary (all processes)\nTotal: {total} bytes"),
+            width,
+        );
         writeln!(out, "{}", "-".repeat(width))?;
-        writeln!(out, "Summary (all processes)")?;
+        for line in header {
+            writeln!(out, "{}", line)?;
+        }
         writeln!(out, "{}", "-".repeat(width))
     };
     write_out(out, all, width, header_hook)?;
     for proc in procs {
-        let header_hook = |out: &mut T, width| {
-            let header = chop_str(&format!("PID {}\n{}", proc.pid, proc.cmdline), width);
+        let header_hook = |out: &mut T, total, width| {
+            let header = chop_str(
+                &format!("PID {}\n{}\nTotal: {total} bytes", proc.pid, proc.cmdline),
+                width,
+            );
             writeln!(out, "{}", "-".repeat(width))?;
             for line in header {
                 writeln!(out, "{}", line)?;
