@@ -86,8 +86,9 @@ fn main() -> io::Result<()> {
     let width = match terminal_size::terminal_size() {
         Some((w, _)) => w.0,
         None => {
-            info!("terminal width not found, defaulting to 80");
-            80
+            const DEFAULT: u16 = 80;
+            info!("terminal width not found, defaulting to {DEFAULT}");
+            DEFAULT
         }
     };
     match args.output {
