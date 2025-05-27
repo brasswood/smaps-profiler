@@ -63,7 +63,7 @@ pub struct ProcListing {
 ///Almost the same as procfs::process::MMapPath. A dictionary key that will allow us to aggregate the maps of a process by their (Path, Permissions).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemCategory {
-    File(FileMapping),
+    File(PathBuf, MMPermissions),
     Heap,
     Stack,
     TStack,
@@ -121,6 +121,11 @@ impl MemoryExt {
             vsys_pss,
             other_map,
         } = self; // destructure self here so that I get a compiler error if fields change
+        let mut new_file_map: HashMap<(PathBuf, MMPermissions), u64> =
+            HashMap::with_capacity(file_map.len());
+        for (f, pss) in file_map {
+            add_at(&mut new_file_map, (f.path.clone(), f.perms), pss);
+        }
         iter::once((MemCategory::Stack, *stack_pss))
             .chain(iter::once((MemCategory::Heap, *heap_pss)))
             .chain(iter::once((MemCategory::TStack, *thread_stack_pss)))
@@ -130,9 +135,9 @@ impl MemoryExt {
             .chain(iter::once((MemCategory::Vsyscall, *vsyscall_pss)))
             .chain(iter::once((MemCategory::Vsys, *vsys_pss)))
             .chain(
-                file_map
-                    .iter()
-                    .map(|(f, pss)| (MemCategory::File(f.clone()), *pss)),
+                new_file_map
+                    .into_iter()
+                    .map(|((path, perms), pss)| (MemCategory::File(path, perms), pss)),
             )
             .chain(
                 other_map
@@ -170,16 +175,26 @@ impl MemoryExt {
     }
 }
 
-fn add_maps<K, V>(mut lhs: HashMap<K, V>, rhs: &HashMap<K, V>) -> HashMap<K, V>
+fn add_maps<K, V, A>(mut lhs: HashMap<K, V>, rhs: &HashMap<K, A>) -> HashMap<K, V>
 where
     K: Eq + Hash + Clone,
-    V: Add<Output = V> + Default + Clone,
+    V: Add<A, Output = V> + Default + Clone,
+    A: Clone,
 {
     for (k, v) in rhs {
-        let entry = lhs.entry(k.clone()).or_default();
-        *entry = entry.clone() + v.clone();
+        add_at(&mut lhs, k.clone(), v.clone());
     }
     lhs
+}
+
+fn add_at<K, V, A>(map: &mut HashMap<K, V>, k: K, a: A)
+where
+    K: Eq + Hash,
+    V: Add<A, Output = V> + Default + Clone,
+    A: Clone,
+{
+    let entry = map.entry(k).or_default();
+    *entry = entry.clone() + a;
 }
 
 impl Add<&MemoryExt> for MemoryExt {

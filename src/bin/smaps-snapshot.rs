@@ -25,7 +25,7 @@ use std::{
     path::PathBuf,
 };
 use untitled_smaps_poller::{
-    get_processes, get_smaps, sum_memory, FileMapping, MemCategory, MemoryExt, ProcListing,
+    get_processes, get_smaps, sum_memory, MemCategory, MemoryExt, ProcListing,
 };
 
 #[derive(Parser)]
@@ -148,11 +148,7 @@ enum Tag {
 
 fn category_to_label(cat: MemCategory) -> String {
     match cat {
-        MemCategory::File(FileMapping {
-            is_self: _,
-            path,
-            perms,
-        }) => {
+        MemCategory::File(path, perms) => {
             format!(
                 "{} {}",
                 path.to_str().unwrap_or("<path not unicode>"),
