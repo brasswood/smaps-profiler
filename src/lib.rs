@@ -61,7 +61,7 @@ pub struct ProcListing {
 }
 
 ///Almost the same as procfs::process::MMapPath. A dictionary key that will allow us to aggregate the maps of a process by their (Path, Permissions).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemCategory {
     File(FileMapping),
     Heap,
@@ -108,7 +108,7 @@ impl MemoryExt {
         MemoryExt::default()
     }
 
-    pub fn iter(&self) -> impl Iterator + use<'_> {
+    pub fn iter(&self) -> impl Iterator<Item = (MemCategory, u64)> + use<'_> {
         let MemoryExt {
             stack_pss,
             heap_pss,
