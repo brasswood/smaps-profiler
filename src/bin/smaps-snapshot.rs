@@ -183,7 +183,14 @@ where
     const MIN_PATH: usize = 20;
     const PERCENT: usize = 4;
     const SEPS: usize = 2;
-    let u64_digits = (fields.peek().unwrap().1.ilog10() + 1) as usize;
+    let u64_digits = {
+        let max = fields.peek().unwrap().1;
+        if max == 0 {
+            1
+        } else {
+            (max.ilog10() + 1) as usize
+        }
+    };
     let width_nopath = PERCENT + u64_digits + 2 * SEPS;
     let width = width.max(width_nopath + MIN_PATH);
     let path_width = width - width_nopath;
