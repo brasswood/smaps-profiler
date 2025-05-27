@@ -13,6 +13,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use crate::Tag::*;
 use clap::Parser;
 use env_logger::Builder;
 use log::{info, LevelFilter};
@@ -139,57 +140,88 @@ fn chop_str(s: &str, width: usize) -> Vec<String> {
     v
 }
 
-fn write_out<T, U>(
-    out: &mut T,
-    mem: MemoryExt,
-    width: usize,
-    mut header_hook: U,
-) -> io::Result<()>
+#[derive(Clone, Debug)]
+enum Tag {
+    Small,
+    Normal(MemCategory),
+}
+
+fn category_to_label(cat: MemCategory) -> String {
+    match cat {
+        MemCategory::File(FileMapping {
+            is_self: _,
+            path,
+            perms,
+        }) => {
+            format!(
+                "{} {}",
+                path.to_str().unwrap_or("<path not unicode>"),
+                display_perms(perms)
+            )
+        }
+        MemCategory::Heap => "Heap".to_string(),
+        MemCategory::Stack => "Stack".to_string(),
+        MemCategory::TStack => "Thread Stack".to_string(),
+        MemCategory::Vdso => "Vdso".to_string(),
+        MemCategory::Vvar => "Vvar".to_string(),
+        MemCategory::Vsyscall => "Vsyscall".to_string(),
+        MemCategory::Anonymous => "Anonymous Mappings".to_string(),
+        MemCategory::Vsys => "Vsys".to_string(),
+        MemCategory::Other(s) if s.is_empty() => "<other unnamed mapping>".to_string(),
+        MemCategory::Other(s) => s,
+    }
+}
+
+fn write_out<T, U>(out: &mut T, mem: MemoryExt, width: usize, mut header_hook: U) -> io::Result<()>
 where
     T: Write,
     U: FnMut(&mut T, usize) -> io::Result<()>,
 {
     let total_mem = mem.total();
-    let mut fields: Vec<(MemCategory, u64)> = mem.iter().collect();
-    fields.sort_by(|(_, a), (_, b)| b.cmp(a));
+    let mut items: Vec<(u8, u64, Tag)> = Vec::new();
+    let mut small_total = 0;
+    for (cat, pss) in mem.iter() {
+        // there's a cleverer way to do this but I don't know it
+        let tenths_percent = pss * 1000 / total_mem;
+        let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
+        if tenths_percent < 5 {
+            small_total += pss;
+        }
+        items.push((percent as u8, pss, Normal(cat)));
+    }
+    let tenths_percent = small_total * 1000 / total_mem;
+    let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
+    items.push((percent as u8, small_total, Small));
+    items.sort_by(|(_, a, _), (_, b, _)| b.cmp(a));
     const MIN_PATH: usize = 20;
     const PERCENT: usize = 4;
     const SEPS: usize = 2;
-    let u64_digits = (fields.first().unwrap().1.max(1).ilog10() + 1) as usize;
+    let u64_digits = (items.first().unwrap().1.max(1).ilog10() + 1) as usize;
     let width_nopath = PERCENT + u64_digits + 2 * SEPS;
     let width = width.max(width_nopath + MIN_PATH);
     let path_width = width - width_nopath;
     header_hook(out, width)?;
-    for (cat, pss) in fields {
-        // there's a cleverer way to do this but I don't know it
-        let tenths_percent = pss * 1000 / total_mem;
-        let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
-        let path = match cat {
-            MemCategory::File(FileMapping {
-                is_self: _,
-                path,
-                perms,
-            }) => {
-                let path_str = format!(
-                    "{} {}",
-                    path.to_str().unwrap_or("<path not unicode>"),
-                    display_perms(perms)
-                );
-                chop_str(&path_str, path_width)
+    let mut small_header_printed = false;
+    for (percent, pss, tag) in items {
+        let label;
+        match tag {
+            Normal(cat) => {
+                label = category_to_label(cat);
+                if percent == 0 && !small_header_printed {
+                    for s in chop_str("Small categories (<0.5%):", width) {
+                        writeln!(out, "{}", s)?;
+                    }
+                    small_header_printed = true;
+                }
             }
-            MemCategory::Heap => vec!["Heap".to_string()],
-            MemCategory::Stack => vec!["Stack".to_string()],
-            MemCategory::TStack => vec!["Thread Stack".to_string()],
-            MemCategory::Vdso => vec!["Vdso".to_string()],
-            MemCategory::Vvar => vec!["Vvar".to_string()],
-            MemCategory::Vsyscall => vec!["Vsyscall".to_string()],
-            MemCategory::Anonymous => vec!["Anonymous Mappings".to_string()],
-            MemCategory::Vsys => vec!["Vsys".to_string()],
-            MemCategory::Other(s) => chop_str(&s, path_width),
-        };
-        let chunk = path.first().map_or("<blank>", |v| v);
+            Small => {
+                label = "<small categories>".to_string();
+            }
+        }
+        let chunks = chop_str(&label, path_width);
+        let chunk = &chunks[0];
         writeln!(out, "{percent:3}%  {pss:u64_digits$}  {chunk:path_width$}")?;
-        for chunk in &path[1..] {
+        for chunk in &chunks[1..] {
             writeln!(out, "{}{}", " ".repeat(width_nopath), chunk)?;
         }
     }
