@@ -164,6 +164,10 @@ impl MemoryExt {
             lib_data,
         }
     }
+
+    pub fn total(&self) -> u64 {
+        self.iter().map(|(_, pss)| pss).sum()
+    }
 }
 
 fn add_maps<K, V>(mut lhs: HashMap<K, V>, rhs: &HashMap<K, V>) -> HashMap<K, V>

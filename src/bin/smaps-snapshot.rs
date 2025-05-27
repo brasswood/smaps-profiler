@@ -13,19 +13,16 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use std::{
-    cmp::Ordering,
-    collections::BinaryHeap,
-    fs,
-    io::{self, BufWriter, Write},
-    path::PathBuf,
-};
-
 use clap::Parser;
 use env_logger::Builder;
 use log::{info, LevelFilter};
 use procfs::process::MMPermissions;
 use regex::Regex;
+use std::{
+    fs,
+    io::{self, BufWriter, Write},
+    path::PathBuf,
+};
 use untitled_smaps_poller::{
     get_processes, get_smaps, sum_memory, FileMapping, MemCategory, MemoryExt, ProcListing,
 };
@@ -103,24 +100,6 @@ fn main() -> io::Result<()> {
     }
 }
 
-#[derive(Eq)]
-struct Field(MemCategory, u64);
-impl PartialEq for Field {
-    fn eq(&self, other: &Self) -> bool {
-        self.1 == other.1
-    }
-}
-impl PartialOrd for Field {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.1.partial_cmp(&other.1)
-    }
-}
-impl Ord for Field {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.1.cmp(&other.1)
-    }
-}
-
 fn display_perms(perms: MMPermissions) -> String {
     let mut res = String::with_capacity(4);
     if perms.contains(MMPermissions::READ) {
@@ -172,30 +151,18 @@ where
     U: FnMut(&mut T, usize) -> io::Result<()>,
     V: FnMut(&mut T, usize) -> io::Result<()>,
 {
-    // TODO: should I do the above ceremony just to get it into a binary heap, or should
-    // I just use Vec::sort_by?
-    let mut fields = BinaryHeap::new();
-    let mut total_mem = 0;
-    for (cat, pss) in mem.iter() {
-        total_mem += pss;
-        fields.push(Field(cat, pss))
-    }
+    let total_mem = mem.total();
+    let mut fields: Vec<(MemCategory, u64)> = mem.iter().collect();
+    fields.sort_by(|(_, a), (_, b)| b.cmp(a));
     const MIN_PATH: usize = 20;
     const PERCENT: usize = 4;
     const SEPS: usize = 2;
-    let u64_digits = {
-        let max = fields.peek().unwrap().1;
-        if max == 0 {
-            1
-        } else {
-            (max.ilog10() + 1) as usize
-        }
-    };
+    let u64_digits = (fields.first().unwrap().1.max(1).ilog10() + 1) as usize;
     let width_nopath = PERCENT + u64_digits + 2 * SEPS;
     let width = width.max(width_nopath + MIN_PATH);
     let path_width = width - width_nopath;
     header_hook(out, width)?;
-    for Field(cat, pss) in fields {
+    for (cat, pss) in fields {
         // there's a cleverer way to do this but I don't know it
         let tenths_percent = pss * 1000 / total_mem;
         let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
@@ -232,7 +199,12 @@ where
     footer_hook(out, width)
 }
 
-fn write_out_all<T: Write>(out: &mut T, procs: Vec<ProcListing>, width: usize) -> io::Result<()> {
+fn write_out_all<T: Write>(
+    out: &mut T,
+    mut procs: Vec<ProcListing>,
+    width: usize,
+) -> io::Result<()> {
+    procs.sort_by(|a, b| b.memory_ext.total().cmp(&a.memory_ext.total()));
     let all = sum_memory(&procs);
     let header_hook = |out: &mut T, width| {
         writeln!(out, "Summary (all processes)")?;
