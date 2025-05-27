@@ -96,7 +96,7 @@ fn main() -> io::Result<()> {
             write_out_all(&mut writer, procs, width as usize)
         }
         None => {
-            let mut writer = BufWriter::new(io::stdout());
+            let mut writer = BufWriter::new(io::stdout().lock());
             write_out_all(&mut writer, procs, width as usize)
         }
     }

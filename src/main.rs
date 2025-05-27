@@ -23,7 +23,7 @@ use log::{warn, LevelFilter};
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
 use std::collections::BTreeMap;
-use std::io;
+use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -204,7 +204,7 @@ fn main() -> io::Result<()> {
         )
         .unwrap();
         let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
-        print_processes(&procs);
+        print_processes(&procs)?;
         memory_series.push(sum_memory(&procs));
         let elapsed = Instant::now() - start;
         if elapsed < duration {
@@ -223,8 +223,10 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn print_processes(processes: &Vec<ProcListing>) {
-    println!("PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tCMD");
+fn print_processes(processes: &Vec<ProcListing>) -> io::Result<()> {
+    // https://rust-cli.github.io/book/tutorial/output.html#a-note-on-printing-performance
+    let mut writer = BufWriter::new(io::stdout().lock());
+    writeln!(&mut writer, "PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tCMD")?;
     for proc_listing in processes {
         let ProcListing {
             pid,
@@ -251,8 +253,10 @@ fn print_processes(processes: &Vec<ProcListing>) {
             lib_data,
         } = memory_ext.aggregate_file_maps();
         let other: u64 = other_map.values().sum();
-        println!("{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{cmdline}");
+        writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{cmdline}")?;
     }
+    writer.flush()?;
+    Ok(())
 }
 
 fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
