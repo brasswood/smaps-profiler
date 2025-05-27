@@ -196,7 +196,9 @@ where
     let path_width = width - width_nopath;
     header_hook(out, width)?;
     for Field(cat, pss) in fields {
-        let percent = (pss / 100) + if pss % 100 >= 50 { 1 } else { 0 };
+        // there's a cleverer way to do this but I don't know it
+        let tenths_percent = pss * 1000 / total_mem;
+        let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
         let path = match cat {
             MemCategory::File(FileMapping {
                 is_self: _,
