@@ -132,11 +132,13 @@ fn display_perms(perms: MMPermissions) -> String {
 fn chop_str(s: &str, width: usize) -> Vec<String> {
     // https://users.rust-lang.org/t/solved-how-to-split-string-into-multiple-sub-strings-with-given-length/10542/2
     let mut v = vec![];
-    let mut cur = s;
-    while !cur.is_empty() {
-        let (chunk, rest) = cur.split_at(cur.len().min(width));
-        v.push(chunk.to_string());
-        cur = rest;
+    for s in s.split('\n') {
+        let mut cur = s;
+        while !cur.is_empty() {
+            let (chunk, rest) = cur.split_at(cur.len().min(width));
+            v.push(chunk.to_string());
+            cur = rest;
+        }
     }
     v
 }
