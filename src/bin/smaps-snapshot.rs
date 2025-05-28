@@ -13,13 +13,14 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::Tag::*;
+use crate::{MemCategory::*, Tag::*};
 use clap::Parser;
 use env_logger::Builder;
 use log::{info, LevelFilter};
 use procfs::process::MMPermissions;
 use regex::Regex;
 use std::{
+    cmp::{Ordering, Reverse},
     fs,
     io::{self, BufWriter, Write},
     path::PathBuf,
@@ -140,31 +141,96 @@ fn chop_str(s: &str, width: usize) -> Vec<String> {
     v
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Tag {
     Small,
     Normal(MemCategory),
 }
 
+impl Tag {
+    fn discriminant_rank(&self) -> u8 {
+        match self {
+            Normal(Stack) => 0,
+            Normal(Heap) => 1,
+            Normal(TStack) => 2,
+            Normal(Vdso) => 3,
+            Normal(Vvar) => 4,
+            Normal(Vsyscall) => 5,
+            Normal(Anonymous) => 6,
+            Normal(Vsys) => 7,
+            Small => 8,
+            Normal(Other(_)) => 9,
+            Normal(File(_, _)) => 10,
+        }
+    }
+}
+
+impl Ord for Tag {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.discriminant_rank().cmp(&other.discriminant_rank()) {
+            Ordering::Equal => {
+                let (Normal(l), Normal(r)) = (self, other) else { return Ordering::Equal };
+                match (l, r) {
+                    (Other(l), Other(r)) => l.cmp(r),
+                    (File(lpath, lperms), File(rpath, rperms)) => (lpath, lperms).cmp(&(rpath, rperms)),
+                    _ => Ordering::Equal,
+                }
+            },
+            o => o,
+        }
+    }
+}
+
+impl PartialOrd for Tag {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(&other))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Item {
+    percent: u8,
+    pss: u64,
+    tag: Tag,
+}
+
+impl Item {
+    fn new(percent: u8, pss: u64, tag: Tag) -> Item {
+        Item{ percent, pss, tag }
+    }
+}
+
+impl Ord for Item {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (Reverse(self.pss), &self.tag).cmp(&(Reverse(other.pss), &other.tag))
+    }
+}
+
+impl PartialOrd for Item {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 fn category_to_label(cat: MemCategory) -> String {
     match cat {
-        MemCategory::File(path, perms) => {
+        File(path, perms) => {
             format!(
                 "{} {}",
                 path.to_str().unwrap_or("<path not unicode>"),
                 display_perms(perms)
             )
         }
-        MemCategory::Heap => "Heap".to_string(),
-        MemCategory::Stack => "Stack".to_string(),
-        MemCategory::TStack => "Thread Stack".to_string(),
-        MemCategory::Vdso => "Vdso".to_string(),
-        MemCategory::Vvar => "Vvar".to_string(),
-        MemCategory::Vsyscall => "Vsyscall".to_string(),
-        MemCategory::Anonymous => "Anonymous Mappings".to_string(),
-        MemCategory::Vsys => "Vsys".to_string(),
-        MemCategory::Other(s) if s.is_empty() => "<other unnamed mapping>".to_string(),
-        MemCategory::Other(s) => s,
+        Heap => "Heap".to_string(),
+        Stack => "Stack".to_string(),
+        TStack => "Thread Stack".to_string(),
+        Vdso => "Vdso".to_string(),
+        Vvar => "Vvar".to_string(),
+        Vsyscall => "Vsyscall".to_string(),
+        Anonymous => "Anonymous Mappings".to_string(),
+        Vsys => "Vsys".to_string(),
+        Other(s) if s.is_empty() => "<other unnamed mapping>".to_string(),
+        Other(s) => s,
     }
 }
 
@@ -174,7 +240,7 @@ where
     U: FnMut(&mut T, u64, usize) -> io::Result<()>,
 {
     let total_mem = mem.total();
-    let mut items: Vec<(u8, u64, Tag)> = Vec::new();
+    let mut items: Vec<Item> = Vec::new();
     let mut small_total = 0;
     for (cat, pss) in mem.iter() {
         // there's a cleverer way to do this but I don't know it
@@ -183,22 +249,22 @@ where
         if tenths_percent < 5 {
             small_total += pss;
         }
-        items.push((percent as u8, pss, Normal(cat)));
+        items.push(Item::new(percent as u8, pss, Normal(cat)));
     }
     let tenths_percent = small_total * 1000 / total_mem;
     let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
-    items.push((percent as u8, small_total, Small));
-    items.sort_by(|(_, a, _), (_, b, _)| b.cmp(a));
+    items.push(Item::new(percent as u8, small_total, Small));
+    items.sort_unstable();
     const MIN_PATH: usize = 20;
     const PERCENT: usize = 4;
     const SEPS: usize = 2;
-    let u64_digits = (items.first().unwrap().1.max(1).ilog10() + 1) as usize;
+    let u64_digits = (items.first().unwrap().pss.max(1).ilog10() + 1) as usize;
     let width_nopath = PERCENT + u64_digits + 2 * SEPS;
     let width = width.max(width_nopath + MIN_PATH);
     let path_width = width - width_nopath;
     header_hook(out, total_mem, width)?;
     let mut small_header_printed = false;
-    for (percent, pss, tag) in items {
+    for Item{ percent, pss, tag } in items {
         let label;
         match tag {
             Normal(cat) => {
@@ -229,7 +295,7 @@ fn write_out_all<T: Write>(
     mut procs: Vec<ProcListing>,
     width: usize,
 ) -> io::Result<()> {
-    procs.sort_by(|a, b| b.memory_ext.total().cmp(&a.memory_ext.total()));
+    procs.sort_unstable_by_key(|p| Reverse(p.memory_ext.total()));
     let all = sum_memory(&procs);
     let header_hook = |out: &mut T, total, width| {
         let header = chop_str(
