@@ -26,7 +26,7 @@ use std::{
     path::PathBuf,
 };
 use untitled_smaps_poller::{
-    get_processes, get_smaps, sum_memory, MemCategory, MemoryExt, ProcListing,
+    get_processes, get_smaps, mem_iter::MemCategory, sum_memory, MemoryExt, ProcListing,
 };
 
 #[derive(Parser)]
