@@ -148,7 +148,7 @@ enum Tag {
 }
 
 impl Tag {
-    fn discriminant_rank(&self) -> u8 {
+    fn constructor_rank(&self) -> u8 {
         match self {
             Normal(Stack) => 0,
             Normal(Heap) => 1,
@@ -167,15 +167,19 @@ impl Tag {
 
 impl Ord for Tag {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.discriminant_rank().cmp(&other.discriminant_rank()) {
+        match self.constructor_rank().cmp(&other.constructor_rank()) {
             Ordering::Equal => {
-                let (Normal(l), Normal(r)) = (self, other) else { return Ordering::Equal };
+                let (Normal(l), Normal(r)) = (self, other) else {
+                    return Ordering::Equal;
+                };
                 match (l, r) {
                     (Other(l), Other(r)) => l.cmp(r),
-                    (File(lpath, lperms), File(rpath, rperms)) => (lpath, lperms).cmp(&(rpath, rperms)),
+                    (File(lpath, lperms), File(rpath, rperms)) => {
+                        (lpath, Reverse(lperms)).cmp(&(rpath, Reverse(rperms)))
+                    }
                     _ => Ordering::Equal,
                 }
-            },
+            }
             o => o,
         }
     }
@@ -183,7 +187,7 @@ impl Ord for Tag {
 
 impl PartialOrd for Tag {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 
@@ -196,7 +200,7 @@ struct Item {
 
 impl Item {
     fn new(percent: u8, pss: u64, tag: Tag) -> Item {
-        Item{ percent, pss, tag }
+        Item { percent, pss, tag }
     }
 }
 
@@ -264,7 +268,7 @@ where
     let path_width = width - width_nopath;
     header_hook(out, total_mem, width)?;
     let mut small_header_printed = false;
-    for Item{ percent, pss, tag } in items {
+    for Item { percent, pss, tag } in items {
         let label;
         match tag {
             Normal(cat) => {
