@@ -70,7 +70,11 @@ pub struct FileMapping {
 
 impl FileMapping {
     pub fn new(is_self: bool, path: PathBuf, perms: MMPermissions) -> FileMapping {
-        FileMapping { is_self, path, perms }
+        FileMapping {
+            is_self,
+            path,
+            perms,
+        }
     }
 }
 
@@ -122,6 +126,15 @@ impl MemoryExt {
             bin_data,
             lib_data,
         }
+    }
+
+    pub fn aggregate_is_self(&self) -> HashMap<(PathBuf, MMPermissions), u64> {
+        let mut new_file_map: HashMap<(PathBuf, MMPermissions), u64> =
+            HashMap::with_capacity(self.file_map.len());
+        for (f, pss) in &self.file_map {
+            add_at(&mut new_file_map, (f.path.clone(), f.perms), pss);
+        }
+        new_file_map
     }
 
     pub fn total(&self) -> u64 {

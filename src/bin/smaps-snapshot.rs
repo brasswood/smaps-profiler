@@ -13,7 +13,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::{MemCategory::*, Tag::*};
+use crate::Tag::*;
 use clap::Parser;
 use env_logger::Builder;
 use log::{info, LevelFilter};
@@ -25,9 +25,11 @@ use std::{
     io::{self, BufWriter, Write},
     path::PathBuf,
 };
-use untitled_smaps_poller::{
-    get_processes, get_smaps, mem_iter::MemCategory, sum_memory, MemoryExt, ProcListing,
+use untitled_smaps_poller::mem_iter::{
+    IsSelfCombined::{self, *},
+    NonFile::{self, *},
 };
+use untitled_smaps_poller::{get_processes, get_smaps, sum_memory, MemoryExt, ProcListing};
 
 #[derive(Parser)]
 #[command(version, about = "Takes a snapshot of a program's memory usage categories using /proc/<pid>/smaps.", long_about = None)]
@@ -146,23 +148,23 @@ fn chop_str(s: &str, width: usize) -> Vec<String> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Tag {
     Small,
-    Normal(MemCategory),
+    Normal(IsSelfCombined),
 }
 
 impl Tag {
     fn constructor_rank(&self) -> u8 {
         match self {
-            Normal(Stack) => 0,
-            Normal(Heap) => 1,
-            Normal(TStack) => 2,
-            Normal(Vdso) => 3,
-            Normal(Vvar) => 4,
-            Normal(Vsyscall) => 5,
-            Normal(Anonymous) => 6,
-            Normal(Vsys) => 7,
+            Normal(NonFile(Stack)) => 0,
+            Normal(NonFile(Heap)) => 1,
+            Normal(NonFile(TStack)) => 2,
+            Normal(NonFile(Vdso)) => 3,
+            Normal(NonFile(Vvar)) => 4,
+            Normal(NonFile(Vsyscall)) => 5,
+            Normal(NonFile(Anonymous)) => 6,
+            Normal(NonFile(Vsys)) => 7,
             Small => 8,
-            Normal(Other(_)) => 9,
-            Normal(File(_, _)) => 10,
+            Normal(NonFile(Other(_))) => 9,
+            Normal(File(..)) => 10,
         }
     }
 }
@@ -175,7 +177,7 @@ impl Ord for Tag {
                     return Ordering::Equal;
                 };
                 match (l, r) {
-                    (Other(l), Other(r)) => l.cmp(r),
+                    (NonFile(Other(l)), NonFile(Other(r))) => l.cmp(r),
                     (File(lpath, lperms), File(rpath, rperms)) => {
                         (lpath, Reverse(lperms)).cmp(&(rpath, Reverse(rperms)))
                     }
@@ -218,15 +220,8 @@ impl PartialOrd for Item {
     }
 }
 
-fn category_to_label(cat: MemCategory) -> String {
+fn nonfile_category_to_label(cat: NonFile) -> String {
     match cat {
-        File(path, perms) => {
-            format!(
-                "{} {}",
-                path.to_str().unwrap_or("<path not unicode>"),
-                display_perms(perms)
-            )
-        }
         Heap => "Heap".to_string(),
         Stack => "Stack".to_string(),
         TStack => "Thread Stack".to_string(),
@@ -240,6 +235,19 @@ fn category_to_label(cat: MemCategory) -> String {
     }
 }
 
+fn category_to_label(cat: IsSelfCombined) -> String {
+    match cat {
+        File(path, perms) => {
+            format!(
+                "{} {}",
+                path.to_str().unwrap_or("<path not unicode>"),
+                display_perms(perms)
+            )
+        }
+        NonFile(c) => nonfile_category_to_label(c),
+    }
+}
+
 fn write_out<T, U>(out: &mut T, mem: MemoryExt, width: usize, mut header_hook: U) -> io::Result<()>
 where
     T: Write,
@@ -248,7 +256,7 @@ where
     let total_mem = mem.total();
     let mut items: Vec<Item> = Vec::new();
     let mut small_total = 0;
-    for (cat, pss) in mem.iter() {
+    for (cat, pss) in mem.iter_combine_is_self() {
         // there's a cleverer way to do this but I don't know it
         let tenths_percent = pss * 1000 / total_mem;
         let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
