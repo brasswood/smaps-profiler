@@ -63,7 +63,7 @@ pub struct ProcListing {
 ///Almost the same as procfs::process::MMapPath. A dictionary key that will allow us to aggregate the maps of a process by their (Path, Permissions).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemCategory {
-    File(PathBuf, MMPermissions),
+    File(FileMapping),
     Heap,
     Stack,
     TStack,
@@ -77,9 +77,15 @@ pub enum MemCategory {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FileMapping {
-    pub is_self: bool,
-    pub path: PathBuf,
+    pub is_self: Option<bool>,
+    pub path: Option<PathBuf>,
     pub perms: MMPermissions,
+}
+
+impl FileMapping {
+    pub fn new(is_self: Option<bool>, path: Option<PathBuf>, perms: MMPermissions) -> FileMapping {
+        FileMapping { is_self, path, perms }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -96,24 +102,39 @@ pub struct MemoryExt {
     pub other_map: HashMap<String, u64>,
 }
 
-pub struct FileCategoryTotals {
-    pub bin_text: u64,
-    pub lib_text: u64,
-    pub bin_data: u64,
-    pub lib_data: u64,
-}
-
 impl MemoryExt {
     pub fn new() -> MemoryExt {
         MemoryExt::default()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (MemCategory, u64)> + use<'_> {
+    /// Aggregate the table of file-backed mappings based on their fields. Setting a parameter to `true` means,
+    /// "store separate entries for distinct values of this field," while setting it to `false` means, "store
+    /// distinct values of this field in the same entry." The `perms` parameter works the same way, but as a
+    /// bitflag, so you can choose particular permissions you care about making a distinction on.
+    pub fn aggregate_file_maps(&self, is_self: bool, path: bool, perms: MMPermissions) -> HashMap<FileMapping, u64> {
+        let capacity = match (is_self, path, perms) {
+            (true, true, p) if p.intersection(MMPermissions::all()) == MMPermissions::all() => { return self.file_map.clone() },
+            (_, true, _) => self.file_map.len(),
+            (s, false, p) => 1 << (num_bits_on(p.bits()) + s as u8),
+        };
+        let mut ret = HashMap::with_capacity(capacity);
+        for (f, pss) in self.file_map.iter() {
+            let is_self = if is_self { f.is_self } else { None };
+            let path = if path { f.path.clone() } else { None };
+            let perms = perms.intersection(f.perms);
+            add_at(&mut ret, FileMapping{ is_self, path, perms }, pss);
+        }
+        ret
+    }
+
+    /// Returns an iterator over all of the memory categories and their pss stored in this struct, where
+    /// the table of file-backed mappings is aggregated as it is in `aggregate_file_maps`.
+    pub fn iter_aggregate(&self, is_self: bool, path: bool, perms: MMPermissions) -> impl Iterator<Item = (MemCategory, u64)> + use<'_> {
         let MemoryExt {
             stack_pss,
             heap_pss,
             thread_stack_pss,
-            file_map,
+            file_map: _,
             anon_map_pss,
             vdso_pss,
             vvar_pss,
@@ -121,11 +142,6 @@ impl MemoryExt {
             vsys_pss,
             other_map,
         } = self; // destructure self here so that I get a compiler error if fields change
-        let mut new_file_map: HashMap<(PathBuf, MMPermissions), u64> =
-            HashMap::with_capacity(file_map.len());
-        for (f, pss) in file_map {
-            add_at(&mut new_file_map, (f.path.clone(), f.perms), pss);
-        }
         iter::once((MemCategory::Stack, *stack_pss))
             .chain(iter::once((MemCategory::Heap, *heap_pss)))
             .chain(iter::once((MemCategory::TStack, *thread_stack_pss)))
@@ -134,11 +150,7 @@ impl MemoryExt {
             .chain(iter::once((MemCategory::Vvar, *vvar_pss)))
             .chain(iter::once((MemCategory::Vsyscall, *vsyscall_pss)))
             .chain(iter::once((MemCategory::Vsys, *vsys_pss)))
-            .chain(
-                new_file_map
-                    .into_iter()
-                    .map(|((path, perms), pss)| (MemCategory::File(path, perms), pss)),
-            )
+            .chain(self.aggregate_file_maps(is_self, path, perms).into_iter().map(|(f, pss)| (MemCategory::File(f), pss)))
             .chain(
                 other_map
                     .iter()
@@ -146,32 +158,8 @@ impl MemoryExt {
             )
     }
 
-    pub fn aggregate_file_maps(&self) -> FileCategoryTotals {
-        let mut bin_text = 0;
-        let mut lib_text = 0;
-        let mut bin_data = 0;
-        let mut lib_data = 0;
-        for (f, pss) in &self.file_map {
-            let is_self = f.is_self;
-            let is_x = f.perms.contains(MMPermissions::EXECUTE);
-            let field = match (is_self, is_x) {
-                (false, false) => &mut lib_data,
-                (false, true) => &mut lib_text,
-                (true, false) => &mut bin_data,
-                (true, true) => &mut bin_text,
-            };
-            *field += pss;
-        }
-        FileCategoryTotals {
-            bin_text,
-            lib_text,
-            bin_data,
-            lib_data,
-        }
-    }
-
     pub fn total(&self) -> u64 {
-        self.iter().map(|(_, pss)| pss).sum()
+        self.iter_aggregate(true, true, MMPermissions::all()).map(|(_, pss)| pss).sum()
     }
 }
 
@@ -195,6 +183,15 @@ where
 {
     let entry = map.entry(k).or_default();
     *entry = entry.clone() + a;
+}
+
+fn num_bits_on(mut bits: u8) -> u8 {
+    let mut ret = 0;
+    while bits != 0 {
+        ret += bits & 1;
+        bits >>= 1;
+    }
+    ret
 }
 
 impl Add<&MemoryExt> for MemoryExt {
@@ -359,7 +356,7 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
             };
             let (field, label) = match &map.pathname {
                 Path(pathbuf) => (
-                    memory_ext.file_map.entry(FileMapping{ is_self: exe == *pathbuf, path: pathbuf.clone(), perms: map.perms }).or_default(),
+                    memory_ext.file_map.entry(FileMapping{ is_self: Some(exe == *pathbuf), path: Some(pathbuf.clone()), perms: map.perms }).or_default(),
                    "file-backed map".to_string()
                 ),
                 Heap => (&mut memory_ext.heap_pss, "heap".to_string()),
