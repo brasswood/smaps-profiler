@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use untitled_smaps_poller::{
-    get_processes, get_smaps, sum_memory, FileMapping, MemoryExt, ProcListing
+    get_processes, get_smaps, sum_memory, MaskedFileMapping, MemoryExt, ProcListing,
 };
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
@@ -233,11 +233,16 @@ struct FileCategoryTotals {
 
 fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
     let aggregated = mem.aggregate_file_maps(true, false, MMPermissions::EXECUTE);
-    let bin_text = aggregated[&FileMapping::new(Some(true), None, MMPermissions::EXECUTE)];
-    let lib_text = aggregated[&FileMapping::new(Some(false), None,  MMPermissions::EXECUTE)];
-    let bin_data = aggregated[&FileMapping::new(Some(true), None, MMPermissions::NONE)];
-    let lib_data = aggregated[&FileMapping::new(Some(false), None, MMPermissions::NONE)];
-    FileCategoryTotals { bin_text, lib_text, bin_data, lib_data }
+    let bin_text = aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::EXECUTE)];
+    let lib_text = aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::EXECUTE)];
+    let bin_data = aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::NONE)];
+    let lib_data = aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::NONE)];
+    FileCategoryTotals {
+        bin_text,
+        lib_text,
+        bin_data,
+        lib_data,
+    }
 }
 
 fn print_processes(processes: &Vec<ProcListing>) -> io::Result<()> {

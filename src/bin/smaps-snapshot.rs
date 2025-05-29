@@ -123,7 +123,7 @@ fn display_perms(perms: MMPermissions, mask: MMPermissions) -> String {
         res.push('s');
     } else if perms.contains(MMPermissions::PRIVATE) {
         res.push('p');
-    } else if mask.intersects(MMPermissions::PRIVATE.union(MMPermissions::SHARED)){
+    } else if mask.intersects(MMPermissions::PRIVATE.union(MMPermissions::SHARED)) {
         res.push('-');
     }
     res
@@ -177,7 +177,7 @@ impl Ord for Tag {
                 match (l, r) {
                     (Other(l), Other(r)) => l.cmp(r),
                     (File(l), File(r)) => {
-                        (&l.path, Reverse(l.perms)).cmp(&(&r.path, Reverse(r.perms)))
+                        (&l.path, Reverse(l.masked_perms)).cmp(&(&r.path, Reverse(r.masked_perms)))
                     }
                     _ => Ordering::Equal,
                 }
@@ -225,7 +225,7 @@ fn category_to_label(cat: MemCategory, perms_mask: MMPermissions) -> String {
                 Some(path) => path.to_str().unwrap_or("<path not unicode>"),
                 None => "File-backed Mappings",
             };
-            format!("{path} {}", display_perms(f.perms, perms_mask))
+            format!("{path} {}", display_perms(f.masked_perms, perms_mask))
         }
         Heap => "Heap".to_string(),
         Stack => "Stack".to_string(),
