@@ -71,7 +71,7 @@ struct Args {
 }
 
 // http://vrl.cs.brown.edu/color
-const PALETTE1: [ColorType<&str>; 20] = [
+const _PALETTE1: [ColorType<&str>; 20] = [
     RGBString("#35618f"),
     RGBString("#61a3dc"),
     RGBString("#7244b9"),
@@ -94,7 +94,7 @@ const PALETTE1: [ColorType<&str>; 20] = [
     RGBString("#f27ff5"),
 ];
 
-const PALETTE2: [ColorType<&str>; 20] = [
+const _PALETTE2: [ColorType<&str>; 20] = [
     RGBString("#48bf8e"),
     RGBString("#8a0458"),
     RGBString("#93c920"),
@@ -140,7 +140,7 @@ const PALETTE3: [ColorType<&str>; 20] = [
     RGBString("#7377ec"),
 ];
 
-const PALETTE4: [ColorType<&str>; 20] = [
+const _PALETTE4: [ColorType<&str>; 20] = [
     RGBString("#a1def0"),
     RGBString("#8b123a"),
     RGBString("#4dc172"),
@@ -233,15 +233,11 @@ struct FileCategoryTotals {
 
 fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
     let aggregated = mem.aggregate_file_maps(true, false, MMPermissions::EXECUTE);
-    let bin_text = aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::EXECUTE)];
-    let lib_text = aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::EXECUTE)];
-    let bin_data = aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::NONE)];
-    let lib_data = aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::NONE)];
     FileCategoryTotals {
-        bin_text,
-        lib_text,
-        bin_data,
-        lib_data,
+        bin_text: aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::EXECUTE)],
+        lib_text: aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::EXECUTE)],
+        bin_data: aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::NONE)],
+        lib_data: aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::NONE)],
     }
 }
 
