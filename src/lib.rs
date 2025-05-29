@@ -14,7 +14,8 @@
  */
 
 use log::warn;
-use procfs::process::{self, MMPermissions, MMapPath::*, Process};
+use procfs::process::{self, MMapPath::*};
+pub use procfs::process::{MMPermissions, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
 use std::collections::{HashMap, HashSet};

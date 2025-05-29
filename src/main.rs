@@ -20,7 +20,6 @@ use gnuplot::{
     PlotOption::*, RGBString,
 };
 use log::{warn, LevelFilter};
-use procfs::process::MMPermissions;
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
 use std::collections::BTreeMap;
@@ -31,7 +30,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use untitled_smaps_poller::{
-    get_processes, get_smaps, sum_memory, MaskedFileMapping, MemoryExt, ProcListing,
+    get_processes, get_smaps, sum_memory, MMPermissions, MaskedFileMapping, MemoryExt, ProcListing,
 };
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB

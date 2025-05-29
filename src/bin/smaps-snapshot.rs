@@ -17,7 +17,6 @@ use crate::{MemCategory::*, Tag::*};
 use clap::Parser;
 use env_logger::Builder;
 use log::{info, LevelFilter};
-use procfs::process::MMPermissions;
 use regex::Regex;
 use std::{
     cmp::{Ordering, Reverse},
@@ -26,7 +25,7 @@ use std::{
     path::PathBuf,
 };
 use untitled_smaps_poller::{
-    get_processes, get_smaps, sum_memory, MemCategory, MemoryExt, ProcListing,
+    get_processes, get_smaps, sum_memory, MMPermissions, MemCategory, MemoryExt, ProcListing,
 };
 
 #[derive(Parser)]
