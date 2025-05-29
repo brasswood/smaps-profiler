@@ -102,28 +102,28 @@ fn main() -> io::Result<()> {
     }
 }
 
-fn display_perms(perms: MMPermissions) -> String {
+fn display_perms(perms: MMPermissions, mask: MMPermissions) -> String {
     let mut res = String::with_capacity(4);
     if perms.contains(MMPermissions::READ) {
         res.push('r');
-    } else {
+    } else if mask.contains(MMPermissions::READ) {
         res.push('-');
     }
     if perms.contains(MMPermissions::WRITE) {
         res.push('w');
-    } else {
+    } else if mask.contains(MMPermissions::WRITE) {
         res.push('-');
     }
     if perms.contains(MMPermissions::EXECUTE) {
         res.push('x');
-    } else {
+    } else if mask.contains(MMPermissions::EXECUTE) {
         res.push('-');
     }
     if perms.contains(MMPermissions::SHARED) {
         res.push('s');
     } else if perms.contains(MMPermissions::PRIVATE) {
         res.push('p');
-    } else {
+    } else if mask.intersects(MMPermissions::PRIVATE.union(MMPermissions::SHARED)) {
         res.push('-');
     }
     res
@@ -162,7 +162,7 @@ impl Tag {
             Normal(Vsys) => 7,
             Small => 8,
             Normal(Other(_)) => 9,
-            Normal(File(_, _)) => 10,
+            Normal(File(_)) => 10,
         }
     }
 }
@@ -176,8 +176,8 @@ impl Ord for Tag {
                 };
                 match (l, r) {
                     (Other(l), Other(r)) => l.cmp(r),
-                    (File(lpath, lperms), File(rpath, rperms)) => {
-                        (lpath, Reverse(lperms)).cmp(&(rpath, Reverse(rperms)))
+                    (File(l), File(r)) => {
+                        (&l.path, Reverse(l.masked_perms)).cmp(&(&r.path, Reverse(r.masked_perms)))
                     }
                     _ => Ordering::Equal,
                 }
@@ -218,14 +218,14 @@ impl PartialOrd for Item {
     }
 }
 
-fn category_to_label(cat: MemCategory) -> String {
+fn category_to_label(cat: MemCategory, perms_mask: MMPermissions) -> String {
     match cat {
-        File(path, perms) => {
-            format!(
-                "{} {}",
-                path.to_str().unwrap_or("<path not unicode>"),
-                display_perms(perms)
-            )
+        File(f) => {
+            let path = match &f.path {
+                Some(path) => path.to_str().unwrap_or("<path not unicode>"),
+                None => "File-backed Mappings",
+            };
+            format!("{path} {}", display_perms(f.masked_perms, perms_mask))
         }
         Heap => "Heap".to_string(),
         Stack => "Stack".to_string(),
@@ -248,7 +248,8 @@ where
     let total_mem = mem.total();
     let mut items: Vec<Item> = Vec::new();
     let mut small_total = 0;
-    for (cat, pss) in mem.iter() {
+    let perms_mask = MMPermissions::all();
+    for (cat, pss) in mem.iter_aggregate(false, true, perms_mask) {
         // there's a cleverer way to do this but I don't know it
         let tenths_percent = pss * 1000 / total_mem;
         let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
@@ -274,7 +275,7 @@ where
         let label;
         match tag {
             Normal(cat) => {
-                label = category_to_label(cat);
+                label = category_to_label(cat, perms_mask);
                 if percent == 0 && !small_header_printed {
                     for s in chop_str("Small categories (<0.5%):", width) {
                         writeln!(out, "{}", s)?;

@@ -20,6 +20,7 @@ use gnuplot::{
     PlotOption::*, RGBString,
 };
 use log::{warn, LevelFilter};
+use procfs::process::MMPermissions;
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
 use std::collections::BTreeMap;
@@ -30,7 +31,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use untitled_smaps_poller::{
-    get_processes, get_smaps, sum_memory, FileCategoryTotals, MemoryExt, ProcListing,
+    get_processes, get_smaps, sum_memory, MaskedFileMapping, MemoryExt, ProcListing,
 };
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
@@ -223,6 +224,27 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
+struct FileCategoryTotals {
+    bin_text: u64,
+    lib_text: u64,
+    bin_data: u64,
+    lib_data: u64,
+}
+
+fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
+    let aggregated = mem.aggregate_file_maps(true, false, MMPermissions::EXECUTE);
+    let bin_text = aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::EXECUTE)];
+    let lib_text = aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::EXECUTE)];
+    let bin_data = aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::NONE)];
+    let lib_data = aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::NONE)];
+    FileCategoryTotals {
+        bin_text,
+        lib_text,
+        bin_data,
+        lib_data,
+    }
+}
+
 fn print_processes(processes: &Vec<ProcListing>) -> io::Result<()> {
     // https://rust-cli.github.io/book/tutorial/output.html#a-note-on-printing-performance
     let mut writer = BufWriter::new(io::stdout().lock());
@@ -251,7 +273,7 @@ fn print_processes(processes: &Vec<ProcListing>) -> io::Result<()> {
             lib_text,
             bin_data,
             lib_data,
-        } = memory_ext.aggregate_file_maps();
+        } = get_aggregated(memory_ext);
         let other: u64 = other_map.values().sum();
         writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{cmdline}")?;
     }
@@ -289,7 +311,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
             lib_text,
             bin_data,
             lib_data,
-        } = m.aggregate_file_maps();
+        } = get_aggregated(&m);
         bin_text_series.push(bin_text);
         lib_text_series.push(lib_text);
         bin_data_series.push(bin_data);
