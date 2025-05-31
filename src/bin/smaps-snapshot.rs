@@ -49,9 +49,9 @@ struct Args {
     fail_on_noperm: bool,
 
     ///A string of any combination of the characters "bfrwxsp" that specifies the mask to use
-    ///when aggregating file-backed mappings. An empty string here will cause all the mappings
-    ///be aggregated into one entry. If the option is not present, the default behavior will be
-    ///the same as passing "frwxsp".
+    ///when aggregating file-backed mappings. An empty string here (created by passing "-m=")
+    ///will cause all of the mappings be aggregated into one entry. If the option is not present,
+    ///the default behavior will be the same as passing "frwxsp".
     #[arg(short, long)]
     mask: Option<String>,
 
