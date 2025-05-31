@@ -17,7 +17,7 @@ use crate::{MemCategory::*, Tag::*};
 use clap::Parser;
 use env_logger::Builder;
 use log::{info, LevelFilter};
-use regex::{Error::*, Regex};
+use regex::Regex;
 use std::{
     cmp::{Ordering, Reverse},
     fs,
@@ -126,7 +126,7 @@ fn main() -> io::Result<()> {
         }
     });
     let procs = get_processes(
-        &regex,
+        regex,
         args.match_children,
         args.match_self,
         args.fail_on_noperm,
