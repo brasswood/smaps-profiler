@@ -17,7 +17,7 @@ use crate::{MemCategory::*, Tag::*};
 use clap::Parser;
 use env_logger::Builder;
 use log::{info, LevelFilter};
-use regex::Regex;
+use regex::{Error::*, Regex};
 use std::{
     cmp::{Ordering, Reverse},
     fs,
@@ -33,7 +33,7 @@ use untitled_smaps_poller::{
 #[command(version, about = "Takes a snapshot of a program's memory usage categories using /proc/<pid>/smaps.", long_about = None)]
 struct Args {
     ///Regex to match process cmdline against
-    regex: Option<Regex>,
+    regex: Option<String>,
 
     ///If --regex is given, include children of matched processes, even if they don't match.
     #[arg(short = 'c', long, requires = "regex")]
@@ -116,13 +116,29 @@ fn main() -> io::Result<()> {
         },
         None => FMask::new(false, true, MMPermissions::all()),
     };
+    let regex = &args.regex.map(|r| {
+        match Regex::new(r.as_str()) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1)
+            },
+        }
+    });
     let procs = get_processes(
-        &args.regex,
+        &regex,
         args.match_children,
         args.match_self,
         args.fail_on_noperm,
     )
     .unwrap();
+    if procs.is_empty() {
+        match regex {
+            Some(r) => println!("No processes match {r}"),
+            None => println!("No processes found."),
+        };
+        return Ok(());
+    }
     let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
     let width = match terminal_size::terminal_size() {
         Some((w, _)) => w.0,
