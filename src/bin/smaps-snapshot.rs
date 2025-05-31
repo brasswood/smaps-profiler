@@ -179,9 +179,12 @@ fn display_perms(perms: MMPermissions, mask: MMPermissions) -> String {
     }
     if perms.contains(MMPermissions::SHARED) {
         res.push('s');
-    } else if perms.contains(MMPermissions::PRIVATE) {
+    } else if mask.contains(MMPermissions::SHARED) {
+        res.push('-');
+    }
+    if perms.contains(MMPermissions::PRIVATE) {
         res.push('p');
-    } else if mask.intersects(MMPermissions::PRIVATE.union(MMPermissions::SHARED)) {
+    } else if mask.contains(MMPermissions::PRIVATE) {
         res.push('-');
     }
     res
@@ -325,7 +328,6 @@ where
     }
     let mut items: Vec<Item> = Vec::new();
     let mut small_total = 0;
-    let perms_mask = MMPermissions::all();
     for (cat, pss) in mem.iter_aggregate(file_mask) {
         // there's a cleverer way to do this but I don't know it
         let tenths_percent = pss * 1000 / total_mem;
@@ -352,7 +354,7 @@ where
         let label;
         match tag {
             Normal(cat) => {
-                label = category_to_label(cat, perms_mask);
+                label = category_to_label(cat, file_mask.perms);
                 if percent == 0 && !small_header_printed {
                     for s in chop_str("Small categories (<0.5%):", width) {
                         writeln!(out, "{}", s)?;
