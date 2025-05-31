@@ -281,7 +281,7 @@ fn category_to_label(cat: MemCategory, perms_mask: MMPermissions) -> String {
         File(f) => {
             let path = match &f.path {
                 Some(path) => path.to_str().unwrap_or("<path not unicode>"),
-                None => "File-backed Mappings",
+                None => "File-Backed Mappings",
             };
             let is_self = match &f.is_self {
                 Some(b) => {
