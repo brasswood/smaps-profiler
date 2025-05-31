@@ -110,7 +110,7 @@ fn main() -> io::Result<()> {
         Some(s) => match get_mask(s.clone()) {
             Ok(m) => m,
             Err(_) => {
-                eprintln!("Invalid mask {}", s);
+                eprintln!("Invalid mask \"{s}\"");
                 process::exit(1)
             }
         },
@@ -134,7 +134,7 @@ fn main() -> io::Result<()> {
     .unwrap();
     if procs.is_empty() {
         match regex {
-            Some(r) => println!("No processes match {r}"),
+            Some(r) => println!("No processes match \"{r}\"."),
             None => println!("No processes found."),
         };
         return Ok(());
