@@ -22,10 +22,11 @@ use std::{
     cmp::{Ordering, Reverse},
     fs,
     io::{self, BufWriter, Write},
-    path::PathBuf, process,
+    path::PathBuf,
+    process,
 };
 use untitled_smaps_poller::{
-    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MemCategory, MemoryExt, ProcListing
+    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MemCategory, MemoryExt, ProcListing,
 };
 
 #[derive(Parser)]
@@ -113,7 +114,7 @@ fn main() -> io::Result<()> {
                 process::exit(1)
             }
         },
-        None => FMask::new(false, true, MMPermissions::all())
+        None => FMask::new(false, true, MMPermissions::all()),
     };
     let procs = get_processes(
         &args.regex,
@@ -281,12 +282,21 @@ fn category_to_label(cat: MemCategory, perms_mask: MMPermissions) -> String {
     }
 }
 
-fn write_out<T, U>(out: &mut T, mem: MemoryExt, file_mask: &FMask, width: usize, mut header_hook: U) -> io::Result<()>
+fn write_out<T, U>(
+    out: &mut T,
+    mem: MemoryExt,
+    file_mask: &FMask,
+    width: usize,
+    mut header_hook: U,
+) -> io::Result<()>
 where
     T: Write,
     U: FnMut(&mut T, u64, usize) -> io::Result<()>,
 {
     let total_mem = mem.total();
+    if total_mem == 0 {
+        return Ok(());
+    }
     let mut items: Vec<Item> = Vec::new();
     let mut small_total = 0;
     let perms_mask = MMPermissions::all();

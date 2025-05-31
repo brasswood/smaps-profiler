@@ -30,7 +30,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use untitled_smaps_poller::{
-    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MaskedFileMapping, MemoryExt, ProcListing,
+    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MaskedFileMapping, MemoryExt,
+    ProcListing,
 };
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB

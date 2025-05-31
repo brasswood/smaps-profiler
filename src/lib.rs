@@ -102,13 +102,21 @@ pub struct FMask {
 
 impl FMask {
     pub fn new(is_self: bool, path: bool, perms: MMPermissions) -> FMask {
-        FMask { is_self, path, perms }
+        FMask {
+            is_self,
+            path,
+            perms,
+        }
     }
 
     pub fn apply(&self, f: &FileMapping) -> MaskedFileMapping {
         MaskedFileMapping {
             is_self: if self.is_self { Some(f.is_self) } else { None },
-            path: if self.path { Some(f.path.clone()) } else { None },
+            path: if self.path {
+                Some(f.path.clone())
+            } else {
+                None
+            },
             masked_perms: self.perms.intersection(f.perms),
         }
     }
@@ -122,8 +130,16 @@ pub struct MaskedFileMapping {
 }
 
 impl MaskedFileMapping {
-    pub fn new(is_self: Option<bool>, path: Option<PathBuf>, masked_perms: MMPermissions) -> MaskedFileMapping {
-        MaskedFileMapping { is_self, path, masked_perms }
+    pub fn new(
+        is_self: Option<bool>,
+        path: Option<PathBuf>,
+        masked_perms: MMPermissions,
+    ) -> MaskedFileMapping {
+        MaskedFileMapping {
+            is_self,
+            path,
+            masked_perms,
+        }
     }
 }
 
@@ -163,18 +179,17 @@ impl MemoryExt {
         };
         let mut ret = HashMap::with_capacity(capacity);
         for (f, pss) in self.file_map.iter() {
-            add_at(
-                &mut ret,
-                mask.apply(f),
-                pss,
-            );
+            add_at(&mut ret, mask.apply(f), pss);
         }
         ret
     }
 
     /// Returns an iterator over all of the memory categories and their pss stored in this struct, where
     /// the table of file-backed mappings is aggregated as it is in `aggregate_file_maps`.
-    pub fn iter_aggregate(&self, mask: &FMask) -> impl Iterator<Item = (MemCategory, u64)> + use<'_> {
+    pub fn iter_aggregate(
+        &self,
+        mask: &FMask,
+    ) -> impl Iterator<Item = (MemCategory, u64)> + use<'_> {
         let MemoryExt {
             stack_pss,
             heap_pss,
