@@ -22,10 +22,10 @@ use std::{
     cmp::{Ordering, Reverse},
     fs,
     io::{self, BufWriter, Write},
-    path::PathBuf,
+    path::PathBuf, process,
 };
 use untitled_smaps_poller::{
-    get_processes, get_smaps, sum_memory, MMPermissions, MemCategory, MemoryExt, ProcListing,
+    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MemCategory, MemoryExt, ProcListing
 };
 
 #[derive(Parser)]
@@ -47,6 +47,13 @@ struct Args {
     #[arg(short, long)]
     fail_on_noperm: bool,
 
+    ///A string of any combination of the characters "bfrwxsp" that specifies the mask to use
+    ///when aggregating file-backed mappings. An empty string here will cause all the mappings
+    ///be aggregated into one entry. If the option is not present, the default behavior will be
+    ///the same as passing "frwxsp".
+    #[arg(short, long)]
+    mask: Option<String>,
+
     ///File to output info to (stdout if unspecified)
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -58,6 +65,31 @@ struct Args {
     ///Print info messages
     #[arg(short, long)]
     verbose: bool,
+}
+
+fn delete(s: &mut String, c: char) -> bool {
+    if let Some(i) = s.find(c) {
+        s.remove(i);
+        true
+    } else {
+        false
+    }
+}
+
+fn get_mask(mut s: String) -> Result<FMask, ()> {
+    let is_self = delete(&mut s, 'b');
+    let path = delete(&mut s, 'f');
+    let mut perms = MMPermissions::NONE;
+    perms.set(MMPermissions::READ, delete(&mut s, 'r'));
+    perms.set(MMPermissions::WRITE, delete(&mut s, 'w'));
+    perms.set(MMPermissions::EXECUTE, delete(&mut s, 'x'));
+    perms.set(MMPermissions::SHARED, delete(&mut s, 's'));
+    perms.set(MMPermissions::PRIVATE, delete(&mut s, 'p'));
+    if s.is_empty() {
+        Ok(FMask::new(is_self, path, perms))
+    } else {
+        Err(())
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -73,6 +105,16 @@ fn main() -> io::Result<()> {
     } else {
         env_logger::init();
     }
+    let mask = match args.mask {
+        Some(s) => match get_mask(s.clone()) {
+            Ok(m) => m,
+            Err(_) => {
+                eprintln!("Invalid mask {}", s);
+                process::exit(1)
+            }
+        },
+        None => FMask::new(false, true, MMPermissions::all())
+    };
     let procs = get_processes(
         &args.regex,
         args.match_children,
@@ -92,11 +134,11 @@ fn main() -> io::Result<()> {
     match args.output {
         Some(path) => {
             let mut writer = BufWriter::new(fs::File::open(path)?);
-            write_out_all(&mut writer, procs, width as usize)
+            write_out_all(&mut writer, procs, &mask, width as usize)
         }
         None => {
             let mut writer = BufWriter::new(io::stdout().lock());
-            write_out_all(&mut writer, procs, width as usize)
+            write_out_all(&mut writer, procs, &mask, width as usize)
         }
     }
 }
@@ -239,7 +281,7 @@ fn category_to_label(cat: MemCategory, perms_mask: MMPermissions) -> String {
     }
 }
 
-fn write_out<T, U>(out: &mut T, mem: MemoryExt, width: usize, mut header_hook: U) -> io::Result<()>
+fn write_out<T, U>(out: &mut T, mem: MemoryExt, file_mask: &FMask, width: usize, mut header_hook: U) -> io::Result<()>
 where
     T: Write,
     U: FnMut(&mut T, u64, usize) -> io::Result<()>,
@@ -248,7 +290,7 @@ where
     let mut items: Vec<Item> = Vec::new();
     let mut small_total = 0;
     let perms_mask = MMPermissions::all();
-    for (cat, pss) in mem.iter_aggregate(false, true, perms_mask) {
+    for (cat, pss) in mem.iter_aggregate(file_mask) {
         // there's a cleverer way to do this but I don't know it
         let tenths_percent = pss * 1000 / total_mem;
         let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
@@ -299,6 +341,7 @@ where
 fn write_out_all<T: Write>(
     out: &mut T,
     mut procs: Vec<ProcListing>,
+    file_mask: &FMask,
     width: usize,
 ) -> io::Result<()> {
     procs.sort_unstable_by_key(|p| Reverse(p.memory_ext.total()));
@@ -314,7 +357,7 @@ fn write_out_all<T: Write>(
         }
         writeln!(out, "{}", "-".repeat(width))
     };
-    write_out(out, all, width, header_hook)?;
+    write_out(out, all, file_mask, width, header_hook)?;
     for proc in procs {
         let header_hook = |out: &mut T, total, width| {
             let header = chop_str(
@@ -327,7 +370,7 @@ fn write_out_all<T: Write>(
             }
             writeln!(out, "{}", "-".repeat(width))
         };
-        write_out(out, proc.memory_ext, width, header_hook)?;
+        write_out(out, proc.memory_ext, file_mask, width, header_hook)?;
     }
     Ok(())
 }

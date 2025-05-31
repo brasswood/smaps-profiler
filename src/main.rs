@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use untitled_smaps_poller::{
-    get_processes, get_smaps, sum_memory, MMPermissions, MaskedFileMapping, MemoryExt, ProcListing,
+    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MaskedFileMapping, MemoryExt, ProcListing,
 };
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
@@ -231,7 +231,7 @@ struct FileCategoryTotals {
 }
 
 fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
-    let aggregated = mem.aggregate_file_maps(true, false, MMPermissions::EXECUTE);
+    let aggregated = mem.aggregate_file_maps(&FMask::new(true, false, MMPermissions::EXECUTE));
     FileCategoryTotals {
         bin_text: aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::EXECUTE)],
         lib_text: aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::EXECUTE)],
