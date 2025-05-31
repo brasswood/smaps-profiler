@@ -13,3 +13,11 @@ procfs = "0.17.0"
 regex = "1.11.1"
 signal-hook = "0.3.17"
 terminal_size = "0.4.2"
+
+[dev-dependencies]
+criterion = "0.6"
+itertools = "0.14"
+
+[[bench]]
+name = "bench_mask"
+harness = false
