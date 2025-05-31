@@ -116,13 +116,11 @@ fn main() -> io::Result<()> {
         },
         None => FMask::new(false, true, MMPermissions::all()),
     };
-    let regex = &args.regex.map(|r| {
-        match Regex::new(r.as_str()) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("{e}");
-                process::exit(1)
-            },
+    let regex = &args.regex.map(|r| match Regex::new(r.as_str()) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            process::exit(1)
         }
     });
     let procs = get_processes(
@@ -293,10 +291,13 @@ fn category_to_label(cat: MemCategory, perms_mask: MMPermissions) -> String {
                     } else {
                         "(external)".to_string()
                     }
-                },
-                None => String::new()
+                }
+                None => String::new(),
             };
-            format!("{path} {} {is_self}", display_perms(f.masked_perms, perms_mask))
+            format!(
+                "{path} {} {is_self}",
+                display_perms(f.masked_perms, perms_mask)
+            )
         }
         Heap => "Heap".to_string(),
         Stack => "Stack".to_string(),
