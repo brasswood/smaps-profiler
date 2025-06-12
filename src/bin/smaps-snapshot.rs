@@ -312,6 +312,13 @@ fn category_to_label(cat: MemCategory, perms_mask: MMPermissions) -> String {
     }
 }
 
+fn to_percent_rounded(numerator: u64, denominator: u64) -> u8 {
+    // there's a cleverer way to do this but I don't know it
+    let tenths_percent = numerator * 1000 / denominator;
+    let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
+    percent.try_into().unwrap()
+}
+
 fn write_out<T, U>(
     out: &mut T,
     mem: MemoryExt,
@@ -330,17 +337,13 @@ where
     let mut items: Vec<Item> = Vec::new();
     let mut small_total = 0;
     for (cat, pss) in mem.iter_aggregate(file_mask) {
-        // there's a cleverer way to do this but I don't know it
-        let tenths_percent = pss * 1000 / total_mem;
-        let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
-        if tenths_percent < 5 {
+        let percent = to_percent_rounded(pss, total_mem);
+        if percent == 0 {
             small_total += pss;
         }
         items.push(Item::new(percent as u8, pss, Normal(cat)));
     }
-    let tenths_percent = small_total * 1000 / total_mem;
-    let percent = tenths_percent / 10 + if tenths_percent % 10 >= 5 { 1 } else { 0 };
-    items.push(Item::new(percent as u8, small_total, Small));
+    items.push(Item::new(to_percent_rounded(small_total, total_mem), small_total, Small));
     items.sort_unstable();
     const MIN_PATH: usize = 20;
     const PERCENT: usize = 4;
