@@ -327,7 +327,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     }
 
     let xs = Vec::from_iter(0..zero_series.len());
-    let to_kib = |val: u64| (val as f32) / 1024.0;
+    let to_kb = |val: u64| (val as f32) / 1000.0;
     let mut fg = Figure::new();
     let axes = fg.axes2d();
     let x_len = (zero_series.len() - 1) as f64 / 0.75; // hack to make legend appear outside of chart area :(
@@ -339,7 +339,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         .set_minor_grid_options(&[LineStyle(Solid)])
         .set_legend(Graph(1.0), Graph(1.0), &[Invert], &[])
         .set_x_label("Time (s)", &[])
-        .set_y_label("Total Proportional Set Size (KiB)", &[]);
+        .set_y_label("Total Proportional Set Size (KB)", &[]);
     let first_series = vec![0.0; zero_series.len()];
     let mut prev_series = first_series;
     let mut i = 0;
@@ -352,7 +352,7 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
                 if *b != 0 {
                     is_used = true;
                 }
-                a + to_kib(*b)
+                a + to_kb(*b)
             })
             .collect();
         let label = if is_used {
