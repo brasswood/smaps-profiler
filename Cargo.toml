@@ -1,5 +1,5 @@
 [package]
-name = "untitled-smaps-poller"
+name = "smaps-profiler"
 version = "0.3.0"
 edition = "2021"
 license = "GPL-3.0-only"

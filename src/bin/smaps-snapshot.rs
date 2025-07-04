@@ -25,7 +25,7 @@ use std::{
     path::PathBuf,
     process,
 };
-use untitled_smaps_poller::{
+use smaps_profiler::{
     get_processes, get_smaps, sum_memory, FMask, MMPermissions, MemCategory, MemoryExt, ProcListing,
 };
 
