@@ -19,7 +19,7 @@ $ git clone https://github.com/brasswood/smaps-profiler && cd smaps-profiler
 ```console
 smaps-profiler$ cargo install --root ${BASE} --path .
 ```
-This will install the binaries `smaps-profiler` and `smaps-snapshot` in the `${BASE}/bin` folder.
+This will install the binaries `smaps-profiler` and `smaps-snapshot` in `${BASE}/bin`.
 
 # smaps-profiler 
 
