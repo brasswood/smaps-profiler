@@ -4,6 +4,23 @@ smaps-profiler reports stack, heap, text, data, and other categories of memory u
 
 smaps-snapshot gets a more detailed report of the memory usage of a set of processes at one moment in time. It includes all of the same categories as smaps-profiler, but for memory that is backed by files, it can show the memory usage for each individual file. The output is a pretty-printed table (not strictly TSV).
 
+# Installation
+
+Currently, you have to build this yourself, but it's easy with `cargo`.
+
+1. [Install the Rust toolchain](https://www.rust-lang.org/tools/install)
+
+2. Clone this repository:
+```console
+$ git clone https://github.com/brasswood/smaps-profiler && cd smaps-profiler
+```
+
+3. Install the project
+```console
+smaps-profiler$ cargo install --root ${BASE} --path .
+```
+This will install the binaries `smaps-profiler` and `smaps-snapshot` in the `${BASE}/bin` folder.
+
 # smaps-profiler 
 
 ## Examples
