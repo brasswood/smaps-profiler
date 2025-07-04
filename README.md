@@ -34,7 +34,7 @@ PID     STACK_PSS       HEAP_PSS        THREAD_STACK_PSS        BIN_TEXT_PSS    
 105428  118784  4759552 0       3084288 156672  667648  2126848 122880  0       0       0       0       0       vim README.md
 ```
 
-### Graph:
+### Graph (requires gnuplot to be installed):
 ```console
 $ smaps-profiler -c -f -g example-chromium.svg chromium
 <output omitted>
