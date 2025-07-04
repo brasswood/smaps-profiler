@@ -1,5 +1,3 @@
-# smaps-profiler
-
 This repository includes two programs: smaps-profiler and smaps-snapshot.
 
 smaps-profiler reports stack, heap, text, data, and other categories of memory usage for a set of processes over time. It measures the Proportional Set Size (PSS) rather than the Resident Set Size (RSS) to avoid double-counting memory that is shared among processes. It sources data from the /proc/pid/smaps file for each process. It currently outputs TSV to the standard output (memory is in bytes), or it can output a graph to an SVG file (gnuplot must be installed on your system for this to work).
@@ -27,7 +25,6 @@ $ smaps-profiler -c -f -g example-chromium.svg chromium
 $ eog example-chromium.svg
 ```
 ![A graph of Chromium's memory usage](./example-chromium.svg)
-<img src="./example-chromium.svg">
 
 ## Usage
 ```
