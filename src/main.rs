@@ -234,10 +234,10 @@ struct FileCategoryTotals {
 fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
     let aggregated = mem.aggregate_file_maps(&FMask::new(true, false, MMPermissions::EXECUTE));
     FileCategoryTotals {
-        bin_text: aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::EXECUTE)],
-        lib_text: aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::EXECUTE)],
-        bin_data: aggregated[&MaskedFileMapping::new(Some(true), None, MMPermissions::NONE)],
-        lib_data: aggregated[&MaskedFileMapping::new(Some(false), None, MMPermissions::NONE)],
+        bin_text: *aggregated.get(&MaskedFileMapping::new(Some(true), None, MMPermissions::EXECUTE)).unwrap_or(&0),
+        lib_text: *aggregated.get(&MaskedFileMapping::new(Some(false), None, MMPermissions::EXECUTE)).unwrap_or(&0),
+        bin_data: *aggregated.get(&MaskedFileMapping::new(Some(true), None, MMPermissions::NONE)).unwrap_or(&0),
+        lib_data: *aggregated.get(&MaskedFileMapping::new(Some(false), None, MMPermissions::NONE)).unwrap_or(&0),
     }
 }
 
