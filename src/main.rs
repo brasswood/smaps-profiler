@@ -22,6 +22,10 @@ use gnuplot::{
 use log::{warn, LevelFilter};
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
+use smaps_profiler::{
+    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MaskedFileMapping, MemoryExt,
+    ProcListing,
+};
 use std::collections::BTreeMap;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
@@ -29,10 +33,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use smaps_profiler::{
-    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MaskedFileMapping, MemoryExt,
-    ProcListing,
-};
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
 // compared to smaps_rollup. Gotta figure out why.
@@ -235,10 +235,34 @@ struct FileCategoryTotals {
 fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
     let aggregated = mem.aggregate_file_maps(&FMask::new(true, false, MMPermissions::EXECUTE));
     FileCategoryTotals {
-        bin_text: *aggregated.get(&MaskedFileMapping::new(Some(true), None, MMPermissions::EXECUTE)).unwrap_or(&0),
-        lib_text: *aggregated.get(&MaskedFileMapping::new(Some(false), None, MMPermissions::EXECUTE)).unwrap_or(&0),
-        bin_data: *aggregated.get(&MaskedFileMapping::new(Some(true), None, MMPermissions::NONE)).unwrap_or(&0),
-        lib_data: *aggregated.get(&MaskedFileMapping::new(Some(false), None, MMPermissions::NONE)).unwrap_or(&0),
+        bin_text: *aggregated
+            .get(&MaskedFileMapping::new(
+                Some(true),
+                None,
+                MMPermissions::EXECUTE,
+            ))
+            .unwrap_or(&0),
+        lib_text: *aggregated
+            .get(&MaskedFileMapping::new(
+                Some(false),
+                None,
+                MMPermissions::EXECUTE,
+            ))
+            .unwrap_or(&0),
+        bin_data: *aggregated
+            .get(&MaskedFileMapping::new(
+                Some(true),
+                None,
+                MMPermissions::NONE,
+            ))
+            .unwrap_or(&0),
+        lib_data: *aggregated
+            .get(&MaskedFileMapping::new(
+                Some(false),
+                None,
+                MMPermissions::NONE,
+            ))
+            .unwrap_or(&0),
     }
 }
 

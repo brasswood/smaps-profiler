@@ -18,15 +18,15 @@ use clap::Parser;
 use env_logger::Builder;
 use log::{info, LevelFilter};
 use regex::Regex;
+use smaps_profiler::{
+    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MemCategory, MemoryExt, ProcListing,
+};
 use std::{
     cmp::{Ordering, Reverse},
     fs,
     io::{self, BufWriter, Write},
     path::PathBuf,
     process,
-};
-use smaps_profiler::{
-    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MemCategory, MemoryExt, ProcListing,
 };
 
 #[derive(Parser)]
@@ -344,7 +344,11 @@ where
         }
         items.push(Item::new(percent as u8, pss, Normal(cat)));
     }
-    items.push(Item::new(to_percent_rounded(small_total, total_mem), small_total, Small));
+    items.push(Item::new(
+        to_percent_rounded(small_total, total_mem),
+        small_total,
+        Small,
+    ));
     items.sort_unstable();
     const MIN_PATH: usize = 20;
     const PERCENT: usize = 4;
