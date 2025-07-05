@@ -290,10 +290,14 @@ impl Add<&MemoryExt> for MemoryExt {
 
 fn filter_errors<T>(result: ProcResult<T>, fail_on_noperm: bool) -> Option<ProcResult<T>> {
     match result {
-        Err(PermissionDenied(e)) => {
+        Err(PermissionDenied(path)) => {
             if fail_on_noperm {
-                Some(Err(PermissionDenied(e)))
+                Some(Err(PermissionDenied(path)))
             } else {
+                let path = path.as_ref().map_or("<empty path>", |p| {
+                    p.as_path().to_str().unwrap_or("<non-unicode path>")
+                });
+                warn!("Permission denied when accessing {path}. Ignoring.");
                 None
             }
         }
