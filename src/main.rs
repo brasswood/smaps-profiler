@@ -183,6 +183,7 @@ fn main() -> io::Result<()> {
     // guarantee, though. Another possibility is to make get_smaps return [memory_ext] instead, but
     // then there's no inherent guarantee from the signature alone that the length of that list is
     // the same as the length of the input list. At least, I know of no way to do this in Rust.
+    let program_start = Instant::now();
     let args = Args::parse();
     if args.show_warnings {
         Builder::from_default_env()
@@ -207,7 +208,7 @@ fn main() -> io::Result<()> {
         .unwrap();
         let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
         print_processes(&procs)?;
-        memory_series.push(sum_memory(&procs));
+        memory_series.push((start - program_start, sum_memory(&procs)));
         let elapsed = Instant::now() - start;
         if elapsed < duration {
             thread::sleep(duration - (Instant::now() - start));
@@ -302,12 +303,12 @@ fn print_processes(processes: &Vec<ProcListing>) -> io::Result<()> {
     Ok(())
 }
 
-fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
+fn graph_memory(memory_series: Vec<(Duration, MemoryExt)>, out: PathBuf) {
     if memory_series.is_empty() {
         println!("Nothing to plot.");
         return;
     }
-    let empty_vec = Vec::with_capacity(memory_series.len());
+    let empty_vec: Vec<u64> = Vec::with_capacity(memory_series.len());
     let mut stack_series = empty_vec.clone();
     let mut heap_series = empty_vec.clone();
     let mut thread_stack_series = empty_vec.clone();
@@ -323,7 +324,9 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
     // want a BTreeMap here to make the order of categories as consistent as possible in final graph
     let mut other_series = BTreeMap::new();
     let mut zero_series = Vec::new();
-    for m in memory_series {
+    let mut xs: Vec<f64> = Vec::with_capacity(memory_series.len());
+    for (d, m) in memory_series {
+        xs.push(d.as_secs_f64());
         stack_series.push(m.stack_pss);
         heap_series.push(m.heap_pss);
         thread_stack_series.push(m.thread_stack_pss);
@@ -351,7 +354,6 @@ fn graph_memory(memory_series: Vec<MemoryExt>, out: PathBuf) {
         zero_series.push(0);
     }
 
-    let xs = Vec::from_iter(0..zero_series.len());
     let to_kb = |val: u64| (val as f32) / 1000.0;
     let mut fg = Figure::new();
     let axes = fg.axes2d();
