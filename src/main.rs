@@ -44,7 +44,8 @@ struct Args {
     ///Regex to match process cmdline against
     regex: Option<String>,
 
-    ///If --regex is given, include children of matched processes, even if they don't match.
+    ///If --regex is given, include children of matched processes, even if they don't match the
+    ///regex.
     #[arg(short = 'c', long, requires = "regex")]
     match_children: bool,
 

@@ -51,7 +51,7 @@ Arguments:
   [REGEX]  Regex to match process cmdline against
 
 Options:
-  -c, --match-children       If --regex is given, include children of matched processes, even if they don't match
+  -c, --match-children       If --regex is given, include children of matched processes, even if they don't match the regex
   -s, --match-self           Match the process for this program
   -i, --interval <INTERVAL>  Refresh interval in seconds [default: 1]
   -f, --fail-on-noperm       Fail if permission is denied to read a process's info. Default behavior is to skip the process and continue running
@@ -278,7 +278,7 @@ Arguments:
   [REGEX]  Regex to match process cmdline against
 
 Options:
-  -c, --match-children   If --regex is given, include children of matched processes, even if they don't match
+  -c, --match-children   If --regex is given, include children of matched processes, even if they don't match the regex
   -s, --match-self       Match the process for this program
   -f, --fail-on-noperm   Fail if permission is denied to read a process's info. Default behavior is to skip the process and continue running
   -m, --mask <MASK>      A string of any combination of the characters "bfrwxsp" that specifies the mask to use when aggregating file-backed mappings. An empty string here (created by passing "-m=") will cause all of the mappings be aggregated into one entry. If the option is not present, the default behavior will be the same as passing "frwxsp"
