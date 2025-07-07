@@ -15,6 +15,8 @@
 
 use clap::Parser;
 use env_logger::Builder;
+use gnuplot::XAxis::X1;
+use gnuplot::YAxis::Y2;
 use gnuplot::{
     AutoOption::*, AxesCommon, ColorType, Coordinate::*, DashType::*, Figure, LegendOption::*,
     PlotOption::*, RGBString,
@@ -65,6 +67,10 @@ struct Args {
     ///Save graph as SVG to <FILE>
     #[arg(short, long)]
     graph: Option<PathBuf>,
+
+    ///Graph major page faults
+    #[arg(short = 'm', long)]
+    graph_faults: bool,
 
     ///Print warnings to stderr
     #[arg(short = 'w', long)]
@@ -195,6 +201,11 @@ fn main() -> io::Result<()> {
     let duration = Duration::try_from_secs_f64(args.interval).unwrap();
     let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
     let mut memory_series = Vec::new();
+    let mut faults_series = if args.graph_faults {
+        Some(Vec::new())
+    } else {
+        None
+    };
     let term = Arc::new(AtomicBool::new(false));
     signal_flag::register(SIGINT, Arc::clone(&term))?;
     while !term.load(Ordering::Relaxed) {
@@ -208,7 +219,11 @@ fn main() -> io::Result<()> {
         .unwrap();
         let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
         print_processes(&procs)?;
-        memory_series.push((start - program_start, sum_memory(&procs)));
+        let (mem, faults) = sum_memory(&procs);
+        memory_series.push((start - program_start, mem));
+        if let Some(faults_series) = &mut faults_series {
+            faults_series.push(faults);
+        }
         let elapsed = Instant::now() - start;
         if elapsed < duration {
             thread::sleep(duration - (Instant::now() - start));
@@ -221,7 +236,7 @@ fn main() -> io::Result<()> {
         }
     }
     if let Some(path) = args.graph {
-        graph_memory(memory_series, path);
+        graph_memory(memory_series, faults_series, path);
     }
     Ok(())
 }
@@ -270,12 +285,13 @@ fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
 fn print_processes(processes: &Vec<ProcListing>) -> io::Result<()> {
     // https://rust-cli.github.io/book/tutorial/output.html#a-note-on-printing-performance
     let mut writer = BufWriter::new(io::stdout().lock());
-    writeln!(&mut writer, "PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tCMD")?;
+    writeln!(&mut writer, "PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tMAJ_FAULTS\tCMD")?;
     for proc_listing in processes {
         let ProcListing {
             pid,
             cmdline,
             memory_ext,
+            faults,
             ..
         } = proc_listing;
         let MemoryExt {
@@ -297,13 +313,17 @@ fn print_processes(processes: &Vec<ProcListing>) -> io::Result<()> {
             lib_data,
         } = get_aggregated(memory_ext);
         let other: u64 = other_map.values().sum();
-        writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{cmdline}")?;
+        writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{faults}\t{cmdline}")?;
     }
     writer.flush()?;
     Ok(())
 }
 
-fn graph_memory(memory_series: Vec<(Duration, MemoryExt)>, out: PathBuf) {
+fn graph_memory(
+    memory_series: Vec<(Duration, MemoryExt)>,
+    faults_series: Option<Vec<u64>>,
+    out: PathBuf,
+) {
     if memory_series.is_empty() {
         println!("Nothing to plot.");
         return;
@@ -366,7 +386,8 @@ fn graph_memory(memory_series: Vec<(Duration, MemoryExt)>, out: PathBuf) {
         .set_minor_grid_options(&[LineStyle(Solid)])
         .set_legend(Graph(1.0), Graph(1.0), &[Invert], &[])
         .set_x_label("Time (s)", &[])
-        .set_y_label("Total Proportional Set Size (KB)", &[]);
+        .set_y_label("Total Proportional Set Size (KB)", &[])
+        .set_y2_label("Major Page Faults", &[]);
     let first_series = vec![0.0; zero_series.len()];
     let mut prev_series = first_series;
     let mut i = 0;
@@ -412,6 +433,9 @@ fn graph_memory(memory_series: Vec<(Duration, MemoryExt)>, out: PathBuf) {
     draw_series(&vsys_series, "Shared Memory");
     for (path, series) in other_series {
         draw_series(&series, &path);
+    }
+    if let Some(faults_series) = faults_series {
+        axes.lines(&xs, &faults_series, &[Axes(X1, Y2)]);
     }
     /*
     let last_series = prev_series;

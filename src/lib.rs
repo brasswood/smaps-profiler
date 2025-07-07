@@ -29,6 +29,7 @@ pub struct ProcNode {
     pub pid: i32,
     pub ppid: i32,
     pub cmdline: String,
+    pub faults: u64,
     pub process: Process,
     pub children: Vec<usize>,
 }
@@ -47,6 +48,7 @@ impl ProcNode {
             pid,
             ppid: stat.ppid,
             cmdline: process.cmdline()?.join(" "),
+            faults: stat.majflt,
             process,
             children: vec![],
         }))
@@ -58,6 +60,7 @@ pub struct ProcListing {
     pub pid: i32,
     pub ppid: i32,
     pub cmdline: String,
+    pub faults: u64,
     pub memory_ext: MemoryExt,
 }
 
@@ -389,7 +392,7 @@ pub fn get_processes(
 
 pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<ProcListing>> {
     processes.into_iter().filter_map(|proc_node| {
-        let ProcNode { pid, ppid, cmdline, process, .. } = proc_node;
+        let ProcNode { pid, ppid, cmdline, process, faults, .. } = proc_node;
         let maps_result = filter_errors(process.smaps(), fail_on_noperm)?;
         let maps = match maps_result {
             Ok(maps) => maps,
@@ -462,14 +465,17 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
             }; // end match
             *field += get_pss_or_warn(label);
         } // end for map in maps
-        Some(Ok(ProcListing { pid, ppid, cmdline, memory_ext }))
+        Some(Ok(ProcListing { pid, ppid, cmdline, faults, memory_ext }))
     }).collect()
 }
 
-pub fn sum_memory(processes: &[ProcListing]) -> MemoryExt {
+pub fn sum_memory(processes: &[ProcListing]) -> (MemoryExt, u64) {
     processes
         .iter()
-        .fold(MemoryExt::new(), |acc, proc_listing| {
-            acc + &proc_listing.memory_ext
+        .fold((MemoryExt::new(), 0), |(mem, faults), proc_listing| {
+            (
+                mem + &proc_listing.memory_ext,
+                faults + &proc_listing.faults,
+            )
         })
 }
