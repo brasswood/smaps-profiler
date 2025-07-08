@@ -26,16 +26,16 @@ use log::{warn, LevelFilter};
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
 use smaps_profiler::{
-    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MaskedFileMapping, MemoryExt,
-    ProcListing,
+    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MaskedFileMapping, MemoryExt, ProcListing
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+use serde::Serialize;
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
 // compared to smaps_rollup. Gotta figure out why.
@@ -177,20 +177,81 @@ const _PALETTE4: [ColorType<&str>; 20] = [
 
 const PALETTE: [ColorType<&str>; 20] = PALETTE3;
 
-#[derive(Debug)]
+///for json
+#[derive(Debug, Serialize)]
 struct Message {
-    ///Time we started polling smaps
-    time_start: Instant,
-    ///Time we finished polling smaps
-    time_end: Instant,
-    procs: Vec<ProcListing>,
+    ///Time we started polling smaps since beginning of program
+    time_start: Duration,
+    ///Time we finished polling smaps since beginning of program
+    time_end: Duration,
+    procs: Vec<SimpleProcListing>,
 }
 
+#[derive(Debug, Serialize)]
+struct SimpleProcListing {
+    pid: i32,
+    ppid: i32,
+    cmdline: String,
+    faults: u64,
+    memory: SimpleMemory,
+}
+
+impl From<ProcListing> for SimpleProcListing {
+    fn from(proc: ProcListing) -> Self {
+        SimpleProcListing {
+            pid: proc.pid,
+            ppid: proc.ppid,
+            cmdline: proc.cmdline,
+            faults: proc.faults,
+            memory: proc.memory_ext.into(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct SimpleMemory {
+    stack_pss: u64,
+    heap_pss: u64,
+    thread_stack_pss: u64,
+    bin_text_pss: u64,
+    lib_text_pss: u64,
+    bin_data_pss: u64,
+    lib_data_pss: u64,
+    anon_map_pss: u64,
+    vdso_pss: u64,
+    vvar_pss: u64,
+    vsyscall_pss: u64,
+    vsys_pss: u64,
+    other_map: HashMap<String, u64>,
+}
+
+impl From<MemoryExt> for SimpleMemory {
+    fn from(mem: MemoryExt) -> Self {
+        let files = get_aggregated(&mem);
+        SimpleMemory {
+            stack_pss: mem.stack_pss,
+            heap_pss: mem.heap_pss,
+            thread_stack_pss: mem.thread_stack_pss,
+            bin_text_pss: files.bin_text,
+            lib_text_pss: files.lib_text,
+            bin_data_pss: files.bin_data,
+            lib_data_pss: files.lib_data,
+            anon_map_pss: mem.anon_map_pss,
+            vdso_pss: mem.vdso_pss,
+            vvar_pss: mem.vvar_pss,
+            vsyscall_pss: mem.vsyscall_pss,
+            vsys_pss: mem.vsys_pss,
+            other_map: mem.other_map,
+        }
+    }
+}
+
+///for graphing
 #[derive(Debug)]
 struct Datum {
     ///Time we started polling smaps since start of program
     time: Duration,
-    mem: MemoryExt,
+    mem: SimpleMemory,
     faults: u64,
 }
 
@@ -236,24 +297,26 @@ fn main() -> io::Result<()> {
         .unwrap();
         let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
         let end = Instant::now();
-        if args.json {
-            let message = Message {
-                time_start: start,
-                time_end: end,
-                procs: Vec::new(),
-            };
-        } else {
-            print_processes(&procs)?;
-        }
         if let Some(memory_series) = &mut memory_series {
             let (mem, faults) = sum_memory(&procs);
             memory_series.push(Datum {
                 time: end - start,
-                mem,
+                mem: mem.into(),
                 faults,
             });
         }
-        let now_elapsed = Instant::now() - start;
+        let simple_procs = procs.into_iter().map(|p| SimpleProcListing::from(p)).collect();
+        if args.json {
+            let message = Message {
+                time_start: start - program_start,
+                time_end: end - program_start,
+                procs: simple_procs,
+            };
+            print_json(&message)?;
+        } else {
+            print_processes(&simple_procs)?;
+        }
+        let now_elapsed = start.elapsed();
         if  now_elapsed < duration {
             thread::sleep(duration - now_elapsed);
         } else if now_elapsed > duration {
@@ -311,41 +374,44 @@ fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
     }
 }
 
-fn print_processes(processes: &Vec<ProcListing>) -> io::Result<()> {
+fn print_processes(processes: &Vec<SimpleProcListing>) -> io::Result<()> {
     // https://rust-cli.github.io/book/tutorial/output.html#a-note-on-printing-performance
     let mut writer = BufWriter::new(io::stdout().lock());
     writeln!(&mut writer, "PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tMAJ_FAULTS\tCMD")?;
     for proc_listing in processes {
-        let ProcListing {
+        let SimpleProcListing {
             pid,
             cmdline,
-            memory_ext,
+            memory,
             faults,
             ..
         } = proc_listing;
-        let MemoryExt {
+        let SimpleMemory {
             stack_pss: stack,
             heap_pss: heap,
             thread_stack_pss: thread_stack,
-            file_map: _file_map,
+            bin_text_pss: bin_text,
+            lib_text_pss: lib_text,
+            bin_data_pss: bin_data,
+            lib_data_pss: lib_data,
             anon_map_pss: anon_map,
             vdso_pss: vdso,
             vvar_pss: vvar,
             vsyscall_pss: vsyscall,
             vsys_pss: vsys,
             other_map,
-        } = memory_ext;
-        let FileCategoryTotals {
-            bin_text,
-            lib_text,
-            bin_data,
-            lib_data,
-        } = get_aggregated(memory_ext);
+        } = memory;
         let other: u64 = other_map.values().sum();
         writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{faults}\t{cmdline}")?;
     }
     writer.flush()?;
     Ok(())
+}
+
+fn print_json(procs: &Message) -> io::Result<()> {
+    let mut writer = BufWriter::new(io::stdout().lock());
+    let s = serde_json::to_string(procs).unwrap();
+    writeln!(&mut writer, "{s}")
 }
 
 fn graph_memory(
@@ -380,16 +446,10 @@ fn graph_memory(
         stack_series.push(mem.stack_pss);
         heap_series.push(mem.heap_pss);
         thread_stack_series.push(mem.thread_stack_pss);
-        let FileCategoryTotals {
-            bin_text,
-            lib_text,
-            bin_data,
-            lib_data,
-        } = get_aggregated(&mem);
-        bin_text_series.push(bin_text);
-        lib_text_series.push(lib_text);
-        bin_data_series.push(bin_data);
-        lib_data_series.push(lib_data);
+        bin_text_series.push(mem.bin_text_pss);
+        lib_text_series.push(mem.lib_text_pss);
+        bin_data_series.push(mem.bin_data_pss);
+        lib_data_series.push(mem.lib_data_pss);
         anon_map_series.push(mem.anon_map_pss);
         vdso_series.push(mem.vdso_pss);
         vvar_series.push(mem.vvar_pss);

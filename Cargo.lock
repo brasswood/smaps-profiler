@@ -816,6 +816,8 @@ dependencies = [
  "log",
  "procfs",
  "regex",
+ "serde",
+ "serde_json",
  "signal-hook",
  "terminal_size",
 ]
