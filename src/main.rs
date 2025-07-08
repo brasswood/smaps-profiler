@@ -69,7 +69,7 @@ struct Args {
     #[arg(short, long)]
     fail_on_noperm: bool,
 
-    ///Output newline delimited json instead of TSV to stdout
+    ///Output newline delimited JSON instead of TSV to stdout
     #[arg(short, long)]
     json: bool,
 
@@ -77,7 +77,7 @@ struct Args {
     #[arg(short, long)]
     graph: Option<PathBuf>,
 
-    ///Graph major page faults
+    ///Graph major page faults (only affects graph, not TSV or JSON)
     #[arg(short = 'm', long, requires = "graph")]
     graph_faults: bool,
 
