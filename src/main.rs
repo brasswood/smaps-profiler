@@ -23,10 +23,12 @@ use gnuplot::{
     PlotOption::*, RGBString,
 };
 use log::{warn, LevelFilter};
+use serde::Serialize;
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
 use smaps_profiler::{
-    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MaskedFileMapping, MemoryExt, ProcListing
+    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MaskedFileMapping, MemoryExt,
+    ProcListing,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufWriter, Write};
@@ -35,7 +37,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use serde::Serialize;
 
 // TODO: Summing the output from this program appears to underestimate memory usage by ~20kB
 // compared to smaps_rollup. Gotta figure out why.
@@ -305,7 +306,10 @@ fn main() -> io::Result<()> {
                 faults,
             });
         }
-        let simple_procs = procs.into_iter().map(|p| SimpleProcListing::from(p)).collect();
+        let simple_procs = procs
+            .into_iter()
+            .map(|p| SimpleProcListing::from(p))
+            .collect();
         if args.json {
             let message = Message {
                 time_start: start - program_start,
@@ -317,7 +321,7 @@ fn main() -> io::Result<()> {
             print_processes(&simple_procs)?;
         }
         let now_elapsed = start.elapsed();
-        if  now_elapsed < duration {
+        if now_elapsed < duration {
             thread::sleep(duration - now_elapsed);
         } else if now_elapsed > duration {
             warn!(
@@ -414,11 +418,7 @@ fn print_json(procs: &Message) -> io::Result<()> {
     writeln!(&mut writer, "{s}")
 }
 
-fn graph_memory(
-    memory_series: Vec<Datum>,
-    graph_faults: bool,
-    out: PathBuf,
-) {
+fn graph_memory(memory_series: Vec<Datum>, graph_faults: bool, out: PathBuf) {
     if memory_series.is_empty() {
         println!("Nothing to plot.");
         return;
