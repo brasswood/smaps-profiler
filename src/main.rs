@@ -28,7 +28,8 @@ use serde::Serialize;
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
 use smaps_profiler::{
-    add_maps, get_processes, get_smaps, FMask, MMPermissions, MaskedFileMapping, MemoryExt, ProcListing
+    add_maps, get_processes, get_smaps, FMask, MMPermissions, MaskedFileMapping, MemoryExt,
+    ProcListing,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufWriter, Write};
@@ -180,8 +181,6 @@ const _PALETTE4: [ColorType<&str>; 20] = [
 
 const PALETTE: [ColorType<&str>; 20] = PALETTE3;
 
-
-
 #[derive(Debug, Clone)]
 struct Interval {
     ///Duration since program start
@@ -200,7 +199,8 @@ impl Interval {
 impl Serialize for Interval {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer {
+        S: serde::Serializer,
+    {
         let mut state = serializer.serialize_struct("Interval", 2)?;
         state.serialize_field("start_millis", &self.start.as_millis())?;
         state.serialize_field("end_millis", &self.end().as_millis())?;
@@ -345,7 +345,10 @@ struct Message {
 
 impl Message {
     fn from_proc_listings(procs: Vec<ProcListing>, interval: Interval) -> Message {
-        Message { interval, procs: procs.into_iter().map(|p| p.into()).collect() }
+        Message {
+            interval,
+            procs: procs.into_iter().map(|p| p.into()).collect(),
+        }
     }
 }
 
@@ -423,8 +426,6 @@ fn main() -> io::Result<()> {
     }
     Ok(())
 }
-
-
 
 fn print_tsv(message: &Message) -> io::Result<()> {
     // https://rust-cli.github.io/book/tutorial/output.html#a-note-on-printing-performance
