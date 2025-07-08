@@ -469,8 +469,7 @@ fn print_json(messages: &Message) -> io::Result<()> {
 
 fn graph_memory(messages: Vec<Message>, graph_faults: bool, out: PathBuf) {
     if messages.is_empty() {
-        println!("Nothing to plot.");
-        return;
+        eprintln!("Nothing to plot.");
     }
     let empty_vec: Vec<u64> = Vec::with_capacity(messages.len());
     let mut stack_series = empty_vec.clone();
