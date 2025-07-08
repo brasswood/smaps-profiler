@@ -15,6 +15,7 @@
 
 use clap::Parser;
 use env_logger::Builder;
+use gnuplot::TickOption::Mirror;
 use gnuplot::XAxis::X1;
 use gnuplot::YAxis::Y2;
 use gnuplot::{
@@ -379,7 +380,7 @@ fn graph_memory(
     let axes = fg.axes2d();
     let x_len = (zero_series.len() - 1) as f64 / 0.75; // hack to make legend appear outside of chart area :(
     axes.set_x_range(Fix(0.0), Fix(x_len))
-        .set_y_ticks(Some((Auto, 4)), &[], &[])
+        .set_y_ticks(Some((Auto, 4)), &[Mirror(false)], &[])
         .set_y_grid(true)
         .set_y_minor_grid(true)
         .set_grid_options(false, &[LineStyle(Solid)]) // LineStyle seems to be getting ignored
