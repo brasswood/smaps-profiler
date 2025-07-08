@@ -232,7 +232,7 @@ impl MemoryExt {
     }
 }
 
-fn add_maps<K, V, A>(mut lhs: HashMap<K, V>, rhs: &HashMap<K, A>) -> HashMap<K, V>
+pub fn add_maps<K, V, A>(mut lhs: HashMap<K, V>, rhs: &HashMap<K, A>) -> HashMap<K, V>
 where
     K: Eq + Hash + Clone,
     V: Add<A, Output = V> + Default + Clone,

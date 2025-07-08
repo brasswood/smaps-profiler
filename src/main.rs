@@ -23,15 +23,17 @@ use gnuplot::{
     PlotOption::*, RGBString,
 };
 use log::{warn, LevelFilter};
+use serde::ser::SerializeStruct;
 use serde::Serialize;
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
 use smaps_profiler::{
-    get_processes, get_smaps, sum_memory, FMask, MMPermissions, MaskedFileMapping, MemoryExt,
-    ProcListing,
+    add_maps, get_processes, get_smaps, FMask, MMPermissions, MaskedFileMapping, MemoryExt, ProcListing
 };
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufWriter, Write};
+use std::iter::Sum;
+use std::ops::Add;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -178,17 +180,35 @@ const _PALETTE4: [ColorType<&str>; 20] = [
 
 const PALETTE: [ColorType<&str>; 20] = PALETTE3;
 
-///for json
-#[derive(Debug, Serialize)]
-struct Message {
-    ///Time we started polling smaps since beginning of program
-    time_start: Duration,
-    ///Time we finished polling smaps since beginning of program
-    time_end: Duration,
-    procs: Vec<SimpleProcListing>,
+
+
+#[derive(Debug, Clone)]
+struct Interval {
+    ///Duration since program start
+    start: Duration,
+    ///Duration since this interval's start
+    duration: Duration,
 }
 
-#[derive(Debug, Serialize)]
+impl Interval {
+    ///Duration since program start of the end of this interval
+    fn end(&self) -> Duration {
+        self.start + self.duration
+    }
+}
+
+impl Serialize for Interval {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        let mut state = serializer.serialize_struct("Interval", 2)?;
+        state.serialize_field("start_millis", &self.start.as_millis())?;
+        state.serialize_field("end_millis", &self.end().as_millis())?;
+        state.end()
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 struct SimpleProcListing {
     pid: i32,
     ppid: i32,
@@ -209,134 +229,73 @@ impl From<ProcListing> for SimpleProcListing {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Default)]
 struct SimpleMemory {
-    stack_pss: u64,
-    heap_pss: u64,
-    thread_stack_pss: u64,
-    bin_text_pss: u64,
-    lib_text_pss: u64,
-    bin_data_pss: u64,
-    lib_data_pss: u64,
-    anon_map_pss: u64,
-    vdso_pss: u64,
-    vvar_pss: u64,
-    vsyscall_pss: u64,
-    vsys_pss: u64,
-    other_map: HashMap<String, u64>,
+    stack: u64,
+    heap: u64,
+    thread_stack: u64,
+    bin_text: u64,
+    lib_text: u64,
+    bin_data: u64,
+    lib_data: u64,
+    anon_mappings: u64,
+    vdso: u64,
+    vvar: u64,
+    vsyscall: u64,
+    vsys: u64,
+    other: HashMap<String, u64>,
 }
 
 impl From<MemoryExt> for SimpleMemory {
     fn from(mem: MemoryExt) -> Self {
         let files = get_aggregated(&mem);
         SimpleMemory {
-            stack_pss: mem.stack_pss,
-            heap_pss: mem.heap_pss,
-            thread_stack_pss: mem.thread_stack_pss,
-            bin_text_pss: files.bin_text,
-            lib_text_pss: files.lib_text,
-            bin_data_pss: files.bin_data,
-            lib_data_pss: files.lib_data,
-            anon_map_pss: mem.anon_map_pss,
-            vdso_pss: mem.vdso_pss,
-            vvar_pss: mem.vvar_pss,
-            vsyscall_pss: mem.vsyscall_pss,
-            vsys_pss: mem.vsys_pss,
-            other_map: mem.other_map,
+            stack: mem.stack_pss,
+            heap: mem.heap_pss,
+            thread_stack: mem.thread_stack_pss,
+            bin_text: files.bin_text,
+            lib_text: files.lib_text,
+            bin_data: files.bin_data,
+            lib_data: files.lib_data,
+            anon_mappings: mem.anon_map_pss,
+            vdso: mem.vdso_pss,
+            vvar: mem.vvar_pss,
+            vsyscall: mem.vsyscall_pss,
+            vsys: mem.vsys_pss,
+            other: mem.other_map,
         }
     }
 }
 
-///for graphing
+impl Add<&SimpleMemory> for SimpleMemory {
+    type Output = SimpleMemory;
+
+    fn add(self, rhs: &SimpleMemory) -> SimpleMemory {
+        SimpleMemory {
+            stack: self.stack + rhs.stack,
+            heap: self.heap + rhs.heap,
+            thread_stack: self.thread_stack + rhs.thread_stack,
+            bin_text: self.bin_text + rhs.bin_text,
+            lib_text: self.lib_text + rhs.lib_text,
+            bin_data: self.bin_data + rhs.bin_data,
+            lib_data: self.lib_data + rhs.lib_data,
+            anon_mappings: self.anon_mappings + rhs.anon_mappings,
+            vdso: self.vdso + rhs.vdso,
+            vvar: self.vvar + rhs.vvar,
+            vsyscall: self.vsyscall + rhs.vvar,
+            vsys: self.vsys + rhs.vsys,
+            other: add_maps(self.other, &rhs.other),
+        }
+    }
+}
+
+impl Sum for SimpleMemory {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.reduce(|l, r| l + &r).unwrap_or_default()
+    }
+}
+
 #[derive(Debug)]
-struct Datum {
-    ///Time we started polling smaps since start of program
-    time: Duration,
-    mem: SimpleMemory,
-    faults: u64,
-}
-
-fn main() -> io::Result<()> {
-    // Design: incrementally gather the data we need from each process
-    // get_processes: () -> [{pid, ppid, cmdline, Process}]
-    // get_smaps: [{pid, ppid, cmdline, Process}] -> [{pid, ppid, cmdline, memory_ext}], where the
-    // open Process is used by get_smaps to get memory_ext, then dropped in the resulting struct.
-    //
-    // This isn't super extensible, e.g., if I want to make it so the user can pick which columns
-    // are shown, then there has to at least be a type for every possible combination of
-    // columns, and then possibly a unique function for every possible type that could be used as
-    // input. But I get some special guarantee from the typechecker here. For instance, one way to
-    // make the struct more flexible with the user choice of columns is to have a sturct
-    // {pid, ppid, cmdline, Option<memory_ext>, Option<other_field>, etc...}
-    // We lose a guarantee from this: that in a list of these structs, either memory_ext is defined
-    // for all of the elements or it's defined for none of them. The first type does provide that
-    // guarantee, though. Another possibility is to make get_smaps return [memory_ext] instead, but
-    // then there's no inherent guarantee from the signature alone that the length of that list is
-    // the same as the length of the input list. At least, I know of no way to do this in Rust.
-    let program_start = Instant::now();
-    let args = Args::parse();
-    if args.show_warnings {
-        Builder::from_default_env()
-            .filter_level(LevelFilter::Warn)
-            .init();
-    } else {
-        env_logger::init();
-    }
-    let duration = Duration::try_from_secs_f64(args.interval).unwrap();
-    let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
-    let mut memory_series = args.graph.as_ref().map(|_| Vec::new());
-    let term = Arc::new(AtomicBool::new(false));
-    signal_flag::register(SIGINT, Arc::clone(&term))?;
-    while !term.load(Ordering::Relaxed) {
-        let start = Instant::now();
-        let procs = get_processes(
-            &re,
-            args.match_children,
-            args.match_self,
-            args.fail_on_noperm,
-        )
-        .unwrap();
-        let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
-        let end = Instant::now();
-        if let Some(memory_series) = &mut memory_series {
-            let (mem, faults) = sum_memory(&procs);
-            memory_series.push(Datum {
-                time: end - start,
-                mem: mem.into(),
-                faults,
-            });
-        }
-        let simple_procs = procs
-            .into_iter()
-            .map(|p| SimpleProcListing::from(p))
-            .collect();
-        if args.json {
-            let message = Message {
-                time_start: start - program_start,
-                time_end: end - program_start,
-                procs: simple_procs,
-            };
-            print_json(&message)?;
-        } else {
-            print_processes(&simple_procs)?;
-        }
-        let now_elapsed = start.elapsed();
-        if now_elapsed < duration {
-            thread::sleep(duration - now_elapsed);
-        } else if now_elapsed > duration {
-            warn!(
-                "polling smaps and writing data took {}s, overran configured interval of {}s",
-                now_elapsed.as_secs_f64(),
-                duration.as_secs_f64()
-            );
-        }
-    }
-    if let Some(path) = args.graph {
-        graph_memory(memory_series.unwrap(), args.graph_faults, path);
-    }
-    Ok(())
-}
-
 struct FileCategoryTotals {
     bin_text: u64,
     lib_text: u64,
@@ -378,11 +337,100 @@ fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
     }
 }
 
-fn print_processes(processes: &Vec<SimpleProcListing>) -> io::Result<()> {
+#[derive(Debug, Serialize)]
+struct Message {
+    interval: Interval,
+    procs: Vec<SimpleProcListing>,
+}
+
+impl Message {
+    fn from_proc_listings(procs: Vec<ProcListing>, interval: Interval) -> Message {
+        Message { interval, procs: procs.into_iter().map(|p| p.into()).collect() }
+    }
+}
+
+fn main() -> io::Result<()> {
+    // Design: incrementally gather the data we need from each process
+    // get_processes: () -> [{pid, ppid, cmdline, Process}]
+    // get_smaps: [{pid, ppid, cmdline, Process}] -> [{pid, ppid, cmdline, memory_ext}], where the
+    // open Process is used by get_smaps to get memory_ext, then dropped in the resulting struct.
+    //
+    // This isn't super extensible, e.g., if I want to make it so the user can pick which columns
+    // are shown, then there has to at least be a type for every possible combination of
+    // columns, and then possibly a unique function for every possible type that could be used as
+    // input. But I get some special guarantee from the typechecker here. For instance, one way to
+    // make the struct more flexible with the user choice of columns is to have a sturct
+    // {pid, ppid, cmdline, Option<memory_ext>, Option<other_field>, etc...}
+    // We lose a guarantee from this: that in a list of these structs, either memory_ext is defined
+    // for all of the elements or it's defined for none of them. The first type does provide that
+    // guarantee, though. Another possibility is to make get_smaps return [memory_ext] instead, but
+    // then there's no inherent guarantee from the signature alone that the length of that list is
+    // the same as the length of the input list. At least, I know of no way to do this in Rust.
+    let program_start = Instant::now();
+    let args = Args::parse();
+    if args.show_warnings {
+        Builder::from_default_env()
+            .filter_level(LevelFilter::Warn)
+            .init();
+    } else {
+        env_logger::init();
+    }
+    let target_duration = Duration::try_from_secs_f64(args.interval).unwrap();
+    let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
+    let mut all_messages: Option<Vec<Message>> = args.graph.as_ref().map(|_| Vec::new());
+    let term = Arc::new(AtomicBool::new(false));
+    signal_flag::register(SIGINT, Arc::clone(&term))?;
+    while !term.load(Ordering::Relaxed) {
+        let start = program_start.elapsed();
+        let procs = get_processes(
+            &re,
+            args.match_children,
+            args.match_self,
+            args.fail_on_noperm,
+        )
+        .unwrap();
+        let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
+        let interval = Interval {
+            start,
+            duration: program_start.elapsed() - start,
+        };
+        let message = Message::from_proc_listings(procs, interval.clone());
+        // do this first
+        if args.json {
+            print_json(&message)?;
+        } else {
+            print_tsv(&message)?;
+        }
+        // do this second due to moving
+        if let Some(all_messages) = &mut all_messages {
+            all_messages.push(message);
+        }
+        let now_elapsed = program_start.elapsed() - interval.start;
+        if now_elapsed < target_duration {
+            thread::sleep(target_duration - now_elapsed);
+        } else if now_elapsed > target_duration {
+            warn!(
+                "polling smaps and writing data took {}s, overran configured interval of {}s",
+                now_elapsed.as_secs_f64(),
+                target_duration.as_secs_f64()
+            );
+        }
+    } // end loop
+
+    // generate graph
+    if let Some(path) = args.graph {
+        graph_memory(all_messages.unwrap(), args.graph_faults, path);
+    }
+    Ok(())
+}
+
+
+
+fn print_tsv(message: &Message) -> io::Result<()> {
     // https://rust-cli.github.io/book/tutorial/output.html#a-note-on-printing-performance
     let mut writer = BufWriter::new(io::stdout().lock());
     writeln!(&mut writer, "PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tMAJ_FAULTS\tCMD")?;
-    for proc_listing in processes {
+    for proc_listing in &message.procs {
         let SimpleProcListing {
             pid,
             cmdline,
@@ -391,39 +439,39 @@ fn print_processes(processes: &Vec<SimpleProcListing>) -> io::Result<()> {
             ..
         } = proc_listing;
         let SimpleMemory {
-            stack_pss: stack,
-            heap_pss: heap,
-            thread_stack_pss: thread_stack,
-            bin_text_pss: bin_text,
-            lib_text_pss: lib_text,
-            bin_data_pss: bin_data,
-            lib_data_pss: lib_data,
-            anon_map_pss: anon_map,
-            vdso_pss: vdso,
-            vvar_pss: vvar,
-            vsyscall_pss: vsyscall,
-            vsys_pss: vsys,
-            other_map,
+            stack,
+            heap,
+            thread_stack,
+            bin_text,
+            lib_text,
+            bin_data,
+            lib_data,
+            anon_mappings,
+            vdso,
+            vvar,
+            vsyscall,
+            vsys,
+            other,
         } = memory;
-        let other: u64 = other_map.values().sum();
-        writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_map}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{faults}\t{cmdline}")?;
+        let other: u64 = other.values().sum();
+        writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_mappings}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{faults}\t{cmdline}")?;
     }
-    writer.flush()?;
-    Ok(())
+    writer.flush()
 }
 
-fn print_json(procs: &Message) -> io::Result<()> {
+fn print_json(messages: &Message) -> io::Result<()> {
     let mut writer = BufWriter::new(io::stdout().lock());
-    let s = serde_json::to_string(procs).unwrap();
-    writeln!(&mut writer, "{s}")
+    let s = serde_json::to_string(messages).unwrap();
+    writeln!(&mut writer, "{s}")?;
+    writer.flush()
 }
 
-fn graph_memory(memory_series: Vec<Datum>, graph_faults: bool, out: PathBuf) {
-    if memory_series.is_empty() {
+fn graph_memory(messages: Vec<Message>, graph_faults: bool, out: PathBuf) {
+    if messages.is_empty() {
         println!("Nothing to plot.");
         return;
     }
-    let empty_vec: Vec<u64> = Vec::with_capacity(memory_series.len());
+    let empty_vec: Vec<u64> = Vec::with_capacity(messages.len());
     let mut stack_series = empty_vec.clone();
     let mut heap_series = empty_vec.clone();
     let mut thread_stack_series = empty_vec.clone();
@@ -440,30 +488,38 @@ fn graph_memory(memory_series: Vec<Datum>, graph_faults: bool, out: PathBuf) {
     let mut other_series = BTreeMap::new();
     let mut faults_series = graph_faults.then(|| empty_vec.clone());
     let mut zero_series = Vec::new();
-    let mut xs: Vec<f64> = Vec::with_capacity(memory_series.len());
-    for Datum { time, mem, faults } in memory_series {
-        xs.push(time.as_secs_f64());
-        stack_series.push(mem.stack_pss);
-        heap_series.push(mem.heap_pss);
-        thread_stack_series.push(mem.thread_stack_pss);
-        bin_text_series.push(mem.bin_text_pss);
-        lib_text_series.push(mem.lib_text_pss);
-        bin_data_series.push(mem.bin_data_pss);
-        lib_data_series.push(mem.lib_data_pss);
-        anon_map_series.push(mem.anon_map_pss);
-        vdso_series.push(mem.vdso_pss);
-        vvar_series.push(mem.vvar_pss);
-        vsyscall_series.push(mem.vsyscall_pss);
-        vsys_series.push(mem.vsys_pss);
-        for (path, pss) in mem.other_map {
+    let mut xs: Vec<f64> = Vec::with_capacity(messages.len());
+    for message in messages {
+        let time = message.interval.start.as_secs_f64();
+        xs.push(time);
+
+        // do this first because the next operation will move it
+        if let Some(faults_series) = &mut faults_series {
+            let faults = message.procs.iter().map(|p| p.faults).sum();
+            faults_series.push(faults);
+        }
+
+        // aggregate processes
+        let mem: SimpleMemory = message.procs.into_iter().map(|p| p.memory).sum();
+        stack_series.push(mem.stack);
+        heap_series.push(mem.heap);
+        thread_stack_series.push(mem.thread_stack);
+        bin_text_series.push(mem.bin_text);
+        lib_text_series.push(mem.lib_text);
+        bin_data_series.push(mem.bin_data);
+        lib_data_series.push(mem.lib_data);
+        anon_map_series.push(mem.anon_mappings);
+        vdso_series.push(mem.vdso);
+        vvar_series.push(mem.vvar);
+        vsyscall_series.push(mem.vsyscall);
+        vsys_series.push(mem.vsys);
+        for (path, pss) in mem.other {
             other_series
                 .entry(path)
                 .or_insert(zero_series.clone())
                 .push(pss);
         }
-        if let Some(faults_series) = &mut faults_series {
-            faults_series.push(faults);
-        }
+
         zero_series.push(0);
     }
 
