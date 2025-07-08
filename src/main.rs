@@ -65,7 +65,7 @@ struct Args {
     #[arg(short, long)]
     fail_on_noperm: bool,
 
-    ///Output json instead of TSV to stdout
+    ///Output newline delimited json instead of TSV to stdout
     #[arg(short, long)]
     json: bool,
 
