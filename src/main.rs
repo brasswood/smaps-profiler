@@ -65,6 +65,10 @@ struct Args {
     #[arg(short, long)]
     fail_on_noperm: bool,
 
+    ///Output json instead of TSV to stdout
+    #[arg(short, long)]
+    json: bool,
+
     ///Save graph as SVG to <FILE>
     #[arg(short, long)]
     graph: Option<PathBuf>,
@@ -173,6 +177,23 @@ const _PALETTE4: [ColorType<&str>; 20] = [
 
 const PALETTE: [ColorType<&str>; 20] = PALETTE3;
 
+#[derive(Debug)]
+struct Message {
+    ///Time we started polling smaps
+    time_start: Instant,
+    ///Time we finished polling smaps
+    time_end: Instant,
+    procs: Vec<ProcListing>,
+}
+
+#[derive(Debug)]
+struct Datum {
+    ///Time we started polling smaps since start of program
+    time: Duration,
+    mem: MemoryExt,
+    faults: u64,
+}
+
 fn main() -> io::Result<()> {
     // Design: incrementally gather the data we need from each process
     // get_processes: () -> [{pid, ppid, cmdline, Process}]
@@ -201,12 +222,7 @@ fn main() -> io::Result<()> {
     }
     let duration = Duration::try_from_secs_f64(args.interval).unwrap();
     let re = args.regex.map(|s| regex::Regex::new(&s).unwrap());
-    let mut memory_series = Vec::new();
-    let mut faults_series = if args.graph_faults {
-        Some(Vec::new())
-    } else {
-        None
-    };
+    let mut memory_series = args.graph.as_ref().map(|_| Vec::new());
     let term = Arc::new(AtomicBool::new(false));
     signal_flag::register(SIGINT, Arc::clone(&term))?;
     while !term.load(Ordering::Relaxed) {
@@ -219,25 +235,37 @@ fn main() -> io::Result<()> {
         )
         .unwrap();
         let procs = get_smaps(procs, args.fail_on_noperm).unwrap();
-        print_processes(&procs)?;
-        let (mem, faults) = sum_memory(&procs);
-        memory_series.push((start - program_start, mem));
-        if let Some(faults_series) = &mut faults_series {
-            faults_series.push(faults);
+        let end = Instant::now();
+        if args.json {
+            let message = Message {
+                time_start: start,
+                time_end: end,
+                procs: Vec::new(),
+            };
+        } else {
+            print_processes(&procs)?;
         }
-        let elapsed = Instant::now() - start;
-        if elapsed < duration {
-            thread::sleep(duration - (Instant::now() - start));
-        } else if elapsed > duration {
+        if let Some(memory_series) = &mut memory_series {
+            let (mem, faults) = sum_memory(&procs);
+            memory_series.push(Datum {
+                time: end - start,
+                mem,
+                faults,
+            });
+        }
+        let now_elapsed = Instant::now() - start;
+        if  now_elapsed < duration {
+            thread::sleep(duration - now_elapsed);
+        } else if now_elapsed > duration {
             warn!(
-                "polling smaps took {}s, overran configured interval of {}s",
-                elapsed.as_secs_f64(),
+                "polling smaps and writing data took {}s, overran configured interval of {}s",
+                now_elapsed.as_secs_f64(),
                 duration.as_secs_f64()
             );
         }
     }
     if let Some(path) = args.graph {
-        graph_memory(memory_series, faults_series, path);
+        graph_memory(memory_series.unwrap(), args.graph_faults, path);
     }
     Ok(())
 }
@@ -321,8 +349,8 @@ fn print_processes(processes: &Vec<ProcListing>) -> io::Result<()> {
 }
 
 fn graph_memory(
-    memory_series: Vec<(Duration, MemoryExt)>,
-    faults_series: Option<Vec<u64>>,
+    memory_series: Vec<Datum>,
+    graph_faults: bool,
     out: PathBuf,
 ) {
     if memory_series.is_empty() {
@@ -344,33 +372,37 @@ fn graph_memory(
     let mut vsys_series = empty_vec.clone();
     // want a BTreeMap here to make the order of categories as consistent as possible in final graph
     let mut other_series = BTreeMap::new();
+    let mut faults_series = graph_faults.then(|| empty_vec.clone());
     let mut zero_series = Vec::new();
     let mut xs: Vec<f64> = Vec::with_capacity(memory_series.len());
-    for (d, m) in memory_series {
-        xs.push(d.as_secs_f64());
-        stack_series.push(m.stack_pss);
-        heap_series.push(m.heap_pss);
-        thread_stack_series.push(m.thread_stack_pss);
+    for Datum { time, mem, faults } in memory_series {
+        xs.push(time.as_secs_f64());
+        stack_series.push(mem.stack_pss);
+        heap_series.push(mem.heap_pss);
+        thread_stack_series.push(mem.thread_stack_pss);
         let FileCategoryTotals {
             bin_text,
             lib_text,
             bin_data,
             lib_data,
-        } = get_aggregated(&m);
+        } = get_aggregated(&mem);
         bin_text_series.push(bin_text);
         lib_text_series.push(lib_text);
         bin_data_series.push(bin_data);
         lib_data_series.push(lib_data);
-        anon_map_series.push(m.anon_map_pss);
-        vdso_series.push(m.vdso_pss);
-        vvar_series.push(m.vvar_pss);
-        vsyscall_series.push(m.vsyscall_pss);
-        vsys_series.push(m.vsys_pss);
-        for (path, pss) in m.other_map {
+        anon_map_series.push(mem.anon_map_pss);
+        vdso_series.push(mem.vdso_pss);
+        vvar_series.push(mem.vvar_pss);
+        vsyscall_series.push(mem.vsyscall_pss);
+        vsys_series.push(mem.vsys_pss);
+        for (path, pss) in mem.other_map {
             other_series
                 .entry(path)
                 .or_insert(zero_series.clone())
                 .push(pss);
+        }
+        if let Some(faults_series) = &mut faults_series {
+            faults_series.push(faults);
         }
         zero_series.push(0);
     }
@@ -387,8 +419,11 @@ fn graph_memory(
         .set_minor_grid_options(&[LineStyle(Solid)])
         .set_legend(Graph(1.0), Graph(1.0), &[Invert], &[])
         .set_x_label("Time (s)", &[])
-        .set_y_label("Total Proportional Set Size (KB)", &[])
-        .set_y2_label("Major Page Faults", &[]);
+        .set_y_label("Total Proportional Set Size (KB)", &[]);
+    if faults_series.is_some() {
+        axes.set_y2_ticks(Some((Auto, 4)), &[], &[])
+            .set_y2_label("Major Page Faults", &[]);
+    }
     let first_series = vec![0.0; zero_series.len()];
     let mut prev_series = first_series;
     let mut i = 0;
