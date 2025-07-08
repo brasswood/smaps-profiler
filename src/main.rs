@@ -77,7 +77,7 @@ struct Args {
     #[arg(short, long)]
     graph: Option<PathBuf>,
 
-    ///Graph major page faults (only affects graph, not TSV or JSON)
+    ///Graph major + minor page faults (only affects graph, not TSV or JSON)
     #[arg(short = 'm', long, requires = "graph")]
     graph_faults: bool,
 
@@ -538,7 +538,7 @@ fn graph_memory(messages: Vec<Message>, graph_faults: bool, out: PathBuf) {
         .set_y_label("Total Proportional Set Size (KB)", &[]);
     if faults_series.is_some() {
         axes.set_y2_ticks(Some((Auto, 4)), &[], &[])
-            .set_y2_label("Major Page Faults", &[]);
+            .set_y2_label("Major+Minor Page Faults", &[]);
     }
     let first_series = vec![0.0; zero_series.len()];
     let mut prev_series = first_series;
