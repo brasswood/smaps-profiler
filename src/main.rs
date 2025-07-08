@@ -78,7 +78,7 @@ struct Args {
     graph: Option<PathBuf>,
 
     ///Graph major page faults
-    #[arg(short = 'm', long)]
+    #[arg(short = 'm', long, requires = "graph")]
     graph_faults: bool,
 
     ///Print warnings to stderr
