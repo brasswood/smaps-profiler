@@ -392,7 +392,7 @@ fn write_out_all<T: Write>(
     width: usize,
 ) -> io::Result<()> {
     procs.sort_unstable_by_key(|p| Reverse(p.memory_ext.total()));
-    let (all, _) = sum_memory(&procs);
+    let all = sum_memory(&procs);
     let header_hook = |out: &mut T, total, width| {
         let header = chop_str(
             &format!("Summary ({} processes)\nTotal: {total} bytes", procs.len()),

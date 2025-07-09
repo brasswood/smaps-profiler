@@ -213,7 +213,8 @@ struct SimpleProcListing {
     pid: i32,
     ppid: i32,
     cmdline: String,
-    faults: u64,
+    min_faults: u64,
+    maj_faults: u64,
     memory: SimpleMemory,
 }
 
@@ -223,7 +224,8 @@ impl From<ProcListing> for SimpleProcListing {
             pid: proc.pid,
             ppid: proc.ppid,
             cmdline: proc.cmdline,
-            faults: proc.faults,
+            min_faults: proc.min_faults,
+            maj_faults: proc.maj_faults,
             memory: proc.memory_ext.into(),
         }
     }
@@ -430,13 +432,14 @@ fn main() -> io::Result<()> {
 fn print_tsv(message: &Message) -> io::Result<()> {
     // https://rust-cli.github.io/book/tutorial/output.html#a-note-on-printing-performance
     let mut writer = BufWriter::new(io::stdout().lock());
-    writeln!(&mut writer, "PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tMAJ_FAULTS\tCMD")?;
+    writeln!(&mut writer, "PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tMIN_FAULTS\tMAJ_FAULTS\tCMD")?;
     for proc_listing in &message.procs {
         let SimpleProcListing {
             pid,
             cmdline,
             memory,
-            faults,
+            min_faults,
+            maj_faults,
             ..
         } = proc_listing;
         let SimpleMemory {
@@ -455,7 +458,7 @@ fn print_tsv(message: &Message) -> io::Result<()> {
             other,
         } = memory;
         let other: u64 = other.values().sum();
-        writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_mappings}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{faults}\t{cmdline}")?;
+        writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_mappings}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{min_faults}\t{maj_faults}\t{cmdline}")?;
     }
     writer.flush()
 }
@@ -495,7 +498,11 @@ fn graph_memory(messages: Vec<Message>, graph_faults: bool, out: PathBuf) {
 
         // do this first because the next operation will move it
         if let Some(faults_series) = &mut faults_series {
-            let faults = message.procs.iter().map(|p| p.faults).sum();
+            let faults = message
+                .procs
+                .iter()
+                .map(|p| p.min_faults + p.maj_faults)
+                .sum();
             faults_series.push(faults);
         }
 
