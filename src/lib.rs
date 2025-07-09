@@ -13,11 +13,13 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use derive_more::{Add, Sum};
 use log::warn;
 use procfs::process::{self, MMapPath::*};
 pub use procfs::process::{MMPermissions, Process};
 use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, RandomState};
 use std::iter;
@@ -29,8 +31,7 @@ pub struct ProcNode {
     pub pid: i32,
     pub ppid: i32,
     pub cmdline: String,
-    pub min_faults: u64,
-    pub maj_faults: u64,
+    pub faults: Faults,
     pub process: Process,
     pub children: Vec<usize>,
 }
@@ -49,8 +50,7 @@ impl ProcNode {
             pid,
             ppid: stat.ppid,
             cmdline: process.cmdline()?.join(" "),
-            min_faults: stat.minflt,
-            maj_faults: stat.majflt,
+            faults: Faults { minor: stat.minflt, major: stat.majflt },
             process,
             children: vec![],
         }))
@@ -62,8 +62,7 @@ pub struct ProcListing {
     pub pid: i32,
     pub ppid: i32,
     pub cmdline: String,
-    pub min_faults: u64,
-    pub maj_faults: u64,
+    pub faults: Faults,
     pub memory_ext: MemoryExt,
 }
 
@@ -294,6 +293,18 @@ impl Add<&MemoryExt> for MemoryExt {
 }
 */
 
+#[derive(Add, Debug, Copy, Clone, Serialize, Default, Sum)]
+pub struct Faults {
+    pub minor: u64,
+    pub major: u64,
+}
+
+impl Faults {
+    pub fn total(&self) -> u64 {
+        self.minor + self.major
+    }
+}
+
 fn filter_errors<T>(result: ProcResult<T>, fail_on_noperm: bool) -> Option<ProcResult<T>> {
     match result {
         Err(PermissionDenied(path)) => {
@@ -395,7 +406,7 @@ pub fn get_processes(
 
 pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<ProcListing>> {
     processes.into_iter().filter_map(|proc_node| {
-        let ProcNode { pid, ppid, cmdline, process, min_faults, maj_faults, .. } = proc_node;
+        let ProcNode { pid, ppid, cmdline, process, faults, .. } = proc_node;
         let maps_result = filter_errors(process.smaps(), fail_on_noperm)?;
         let maps = match maps_result {
             Ok(maps) => maps,
@@ -468,7 +479,7 @@ pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<V
             }; // end match
             *field += get_pss_or_warn(label);
         } // end for map in maps
-        Some(Ok(ProcListing { pid, ppid, cmdline, min_faults, maj_faults, memory_ext }))
+        Some(Ok(ProcListing { pid, ppid, cmdline, faults, memory_ext }))
     }).collect()
 }
 

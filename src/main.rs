@@ -28,13 +28,10 @@ use serde::Serialize;
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
 use smaps_profiler::{
-    add_maps, get_processes, get_smaps, FMask, MMPermissions, MaskedFileMapping, MemoryExt,
-    ProcListing,
+    add_maps, get_processes, get_smaps, FMask, Faults, MMPermissions, MaskedFileMapping, MemoryExt, ProcListing
 };
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufWriter, Write};
-use std::iter::Sum;
-use std::ops::Add;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -213,8 +210,7 @@ struct SimpleProcListing {
     pid: i32,
     ppid: i32,
     cmdline: String,
-    min_faults: u64,
-    maj_faults: u64,
+    faults: Faults,
     memory: SimpleMemory,
 }
 
@@ -224,8 +220,7 @@ impl From<ProcListing> for SimpleProcListing {
             pid: proc.pid,
             ppid: proc.ppid,
             cmdline: proc.cmdline,
-            min_faults: proc.min_faults,
-            maj_faults: proc.maj_faults,
+            faults: proc.faults,
             memory: proc.memory_ext.into(),
         }
     }
@@ -269,7 +264,7 @@ impl From<MemoryExt> for SimpleMemory {
     }
 }
 
-impl Add<&SimpleMemory> for SimpleMemory {
+impl std::ops::Add<&SimpleMemory> for SimpleMemory {
     type Output = SimpleMemory;
 
     fn add(self, rhs: &SimpleMemory) -> SimpleMemory {
@@ -291,7 +286,7 @@ impl Add<&SimpleMemory> for SimpleMemory {
     }
 }
 
-impl Sum for SimpleMemory {
+impl std::iter::Sum for SimpleMemory {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.reduce(|l, r| l + &r).unwrap_or_default()
     }
@@ -343,13 +338,15 @@ fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
 struct Message {
     interval: Interval,
     procs: Vec<SimpleProcListing>,
+    acc_faults: Faults,
 }
 
 impl Message {
-    fn from_proc_listings(procs: Vec<ProcListing>, interval: Interval) -> Message {
+    fn new(procs: Vec<ProcListing>, interval: Interval, acc_faults: Faults) -> Message {
         Message {
             interval,
             procs: procs.into_iter().map(|p| p.into()).collect(),
+            acc_faults,
         }
     }
 }
@@ -385,6 +382,7 @@ fn main() -> io::Result<()> {
     let mut all_messages: Option<Vec<Message>> = args.graph.as_ref().map(|_| Vec::new());
     let term = Arc::new(AtomicBool::new(false));
     signal_flag::register(SIGINT, Arc::clone(&term))?;
+    let mut pid_faults_map = HashMap::new();
     while !term.load(Ordering::Relaxed) {
         let start = program_start.elapsed();
         let procs = get_processes(
@@ -399,7 +397,9 @@ fn main() -> io::Result<()> {
             start,
             duration: program_start.elapsed() - start,
         };
-        let message = Message::from_proc_listings(procs, interval.clone());
+        update_faults_map(&mut pid_faults_map, &procs);
+        let acc_faults = pid_faults_map.values().copied().sum();
+        let message = Message::new(procs, interval.clone(), acc_faults);
         // do this first
         if args.json {
             print_json(&message)?;
@@ -429,6 +429,16 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
+fn update_faults_map(map: &mut HashMap<i32, Faults>, procs: &Vec<ProcListing>) {
+    // Each process already keeps a running total, so just replace counts for existing
+    // processes in the map. If new pids appear, they will be added to the map.
+    // This will only be wrong if a process dies and then a new one appears with
+    // the same pid.
+    for proc in procs {
+        map.insert(proc.pid, proc.faults);
+    }
+}
+
 fn print_tsv(message: &Message) -> io::Result<()> {
     // https://rust-cli.github.io/book/tutorial/output.html#a-note-on-printing-performance
     let mut writer = BufWriter::new(io::stdout().lock());
@@ -438,8 +448,7 @@ fn print_tsv(message: &Message) -> io::Result<()> {
             pid,
             cmdline,
             memory,
-            min_faults,
-            maj_faults,
+            faults,
             ..
         } = proc_listing;
         let SimpleMemory {
@@ -457,6 +466,10 @@ fn print_tsv(message: &Message) -> io::Result<()> {
             vsys,
             other,
         } = memory;
+        let Faults {
+            minor: min_faults,
+            major: maj_faults,
+        } = faults;
         let other: u64 = other.values().sum();
         writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_mappings}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{min_faults}\t{maj_faults}\t{cmdline}")?;
     }
@@ -498,12 +511,7 @@ fn graph_memory(messages: Vec<Message>, graph_faults: bool, out: PathBuf) {
 
         // do this first because the next operation will move it
         if let Some(faults_series) = &mut faults_series {
-            let faults = message
-                .procs
-                .iter()
-                .map(|p| p.min_faults + p.maj_faults)
-                .sum();
-            faults_series.push(faults);
+            faults_series.push(message.acc_faults.total());
         }
 
         // aggregate processes
