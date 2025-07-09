@@ -178,7 +178,7 @@ const _PALETTE4: [ColorType<&str>; 20] = [
 
 const PALETTE: [ColorType<&str>; 20] = PALETTE3;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct Interval {
     ///Duration since program start
     start: Duration,
@@ -292,7 +292,7 @@ impl std::iter::Sum for SimpleMemory {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, Default)]
 struct FileCategoryTotals {
     bin_text: u64,
     lib_text: u64,
@@ -334,7 +334,7 @@ fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct Message {
     interval: Interval,
     procs: Vec<SimpleProcListing>,

@@ -98,7 +98,7 @@ impl FileMapping {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct FMask {
     pub is_self: bool,
     pub path: bool,
@@ -154,7 +154,7 @@ impl From<FileMapping> for MaskedFileMapping {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct MemoryExt {
     pub stack_pss: u64,
     pub heap_pss: u64,
