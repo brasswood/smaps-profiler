@@ -28,7 +28,8 @@ use serde::Serialize;
 use signal_hook::consts::signal::SIGINT;
 use signal_hook::flag as signal_flag;
 use smaps_profiler::{
-    add_maps, get_processes, get_smaps, FMask, Faults, MMPermissions, MaskedFileMapping, MemoryExt, ProcListing
+    add_maps, get_processes, get_smaps, FMask, Faults, MMPermissions, MaskedFileMapping, MemoryExt,
+    ProcListing,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufWriter, Write};

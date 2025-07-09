@@ -50,7 +50,10 @@ impl ProcNode {
             pid,
             ppid: stat.ppid,
             cmdline: process.cmdline()?.join(" "),
-            faults: Faults { minor: stat.minflt, major: stat.majflt },
+            faults: Faults {
+                minor: stat.minflt,
+                major: stat.majflt,
+            },
             process,
             children: vec![],
         }))
