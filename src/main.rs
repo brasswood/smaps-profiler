@@ -44,7 +44,7 @@ use std::time::{Duration, Instant};
 // TODO: x-axis on graph is somewhat broken. Need to record the time that a sample was taken and
 // print that on stdout and use that as the x position in the graph.
 #[derive(Parser)]
-#[command(version, about = "Reports process stack, heap, text, and data memory usage. Output is in bytes.", long_about = None)]
+#[command(version, about = "Report process memory usage by category.", long_about = None)]
 struct Args {
     ///Regex to match process cmdline against
     regex: Option<String>,
