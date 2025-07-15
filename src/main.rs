@@ -240,7 +240,7 @@ struct SimpleMemory {
     vdso: u64,
     vvar: u64,
     vsyscall: u64,
-    vsys: u64,
+    sysv_shm: u64,
     other: HashMap<String, u64>,
 }
 
@@ -259,7 +259,7 @@ impl From<MemoryExt> for SimpleMemory {
             vdso: mem.vdso_pss,
             vvar: mem.vvar_pss,
             vsyscall: mem.vsyscall_pss,
-            vsys: mem.vsys_pss,
+            sysv_shm: mem.vsys_pss,
             other: mem.other_map,
         }
     }
@@ -281,7 +281,7 @@ impl std::ops::Add<&SimpleMemory> for SimpleMemory {
             vdso: self.vdso + rhs.vdso,
             vvar: self.vvar + rhs.vvar,
             vsyscall: self.vsyscall + rhs.vvar,
-            vsys: self.vsys + rhs.vsys,
+            sysv_shm: self.sysv_shm + rhs.sysv_shm,
             other: add_maps(self.other, &rhs.other),
         }
     }
@@ -467,7 +467,7 @@ fn print_tsv(message: &Message) -> io::Result<()> {
             vdso,
             vvar,
             vsyscall,
-            vsys,
+            sysv_shm: vsys,
             other,
         } = memory;
         let Faults {
@@ -531,7 +531,7 @@ fn graph_memory(messages: Vec<Message>, graph_faults: bool, out: PathBuf) {
         vdso_series.push(all.vdso);
         vvar_series.push(all.vvar);
         vsyscall_series.push(all.vsyscall);
-        vsys_series.push(all.vsys);
+        vsys_series.push(all.sysv_shm);
         for (path, pss) in all.other {
             other_series
                 .entry(path)
@@ -598,10 +598,10 @@ fn graph_memory(messages: Vec<Message>, graph_faults: bool, out: PathBuf) {
     draw_series(&bin_data_series, "Binary Data");
     draw_series(&lib_data_series, "External Data");
     draw_series(&anon_map_series, "Anonymous Mappings");
-    draw_series(&vdso_series, "VDSO");
-    draw_series(&vvar_series, "Shared Kernel Vars");
-    draw_series(&vsyscall_series, "Virtual Syscalls");
-    draw_series(&vsys_series, "Shared Memory");
+    draw_series(&vdso_series, "vDSO");
+    draw_series(&vvar_series, "vvar");
+    draw_series(&vsyscall_series, "vsyscall");
+    draw_series(&vsys_series, "SystemV Shared Memory");
     for (path, series) in other_series {
         draw_series(&series, &path);
     }
