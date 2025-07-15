@@ -233,9 +233,9 @@ struct SimpleMemory {
     heap: u64,
     thread_stack: u64,
     bin_text: u64,
-    lib_text: u64,
+    extern_text: u64,
     bin_data: u64,
-    lib_data: u64,
+    extern_data: u64,
     anon_mappings: u64,
     vdso: u64,
     vvar: u64,
@@ -252,9 +252,9 @@ impl From<MemoryExt> for SimpleMemory {
             heap: mem.heap_pss,
             thread_stack: mem.thread_stack_pss,
             bin_text: files.bin_text,
-            lib_text: files.lib_text,
+            extern_text: files.lib_text,
             bin_data: files.bin_data,
-            lib_data: files.lib_data,
+            extern_data: files.lib_data,
             anon_mappings: mem.anon_map_pss,
             vdso: mem.vdso_pss,
             vvar: mem.vvar_pss,
@@ -274,9 +274,9 @@ impl std::ops::Add<&SimpleMemory> for SimpleMemory {
             heap: self.heap + rhs.heap,
             thread_stack: self.thread_stack + rhs.thread_stack,
             bin_text: self.bin_text + rhs.bin_text,
-            lib_text: self.lib_text + rhs.lib_text,
+            extern_text: self.extern_text + rhs.extern_text,
             bin_data: self.bin_data + rhs.bin_data,
-            lib_data: self.lib_data + rhs.lib_data,
+            extern_data: self.extern_data + rhs.extern_data,
             anon_mappings: self.anon_mappings + rhs.anon_mappings,
             vdso: self.vdso + rhs.vdso,
             vvar: self.vvar + rhs.vvar,
@@ -446,7 +446,7 @@ fn update_faults_map(map: &mut HashMap<i32, Faults>, procs: &Vec<ProcListing>) {
 fn print_tsv(message: &Message) -> io::Result<()> {
     // https://rust-cli.github.io/book/tutorial/output.html#a-note-on-printing-performance
     let mut writer = BufWriter::new(io::stdout().lock());
-    writeln!(&mut writer, "PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tLIB_TEXT_PSS\tBIN_DATA_PSS\tLIB_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tMIN_FAULTS\tMAJ_FAULTS\tCMD")?;
+    writeln!(&mut writer, "PID\tSTACK_PSS\tHEAP_PSS\tTHREAD_STACK_PSS\tBIN_TEXT_PSS\tEXTERN_TEXT_PSS\tBIN_DATA_PSS\tEXTERN_DATA_PSS\tANON_MAP_PSS\tVDSO_PSS\tVVAR_PSS\tVSYSCALL_PSS\tSHM_PSS\tOTHER_PSS\tMIN_FAULTS\tMAJ_FAULTS\tCMD")?;
     for proc_listing in &message.procs {
         let SimpleProcListing {
             pid,
@@ -460,9 +460,9 @@ fn print_tsv(message: &Message) -> io::Result<()> {
             heap,
             thread_stack,
             bin_text,
-            lib_text,
+            extern_text,
             bin_data,
-            lib_data,
+            extern_data,
             anon_mappings,
             vdso,
             vvar,
@@ -475,7 +475,7 @@ fn print_tsv(message: &Message) -> io::Result<()> {
             major: maj_faults,
         } = faults;
         let other: u64 = other.values().sum();
-        writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{lib_text}\t{bin_data}\t{lib_data}\t{anon_mappings}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{min_faults}\t{maj_faults}\t{cmdline}")?;
+        writeln!(&mut writer, "{pid}\t{stack}\t{heap}\t{thread_stack}\t{bin_text}\t{extern_text}\t{bin_data}\t{extern_data}\t{anon_mappings}\t{vdso}\t{vvar}\t{vsyscall}\t{vsys}\t{other}\t{min_faults}\t{maj_faults}\t{cmdline}")?;
     }
     writer.flush()
 }
@@ -524,9 +524,9 @@ fn graph_memory(messages: Vec<Message>, graph_faults: bool, out: PathBuf) {
         heap_series.push(all.heap);
         thread_stack_series.push(all.thread_stack);
         bin_text_series.push(all.bin_text);
-        lib_text_series.push(all.lib_text);
+        lib_text_series.push(all.extern_text);
         bin_data_series.push(all.bin_data);
-        lib_data_series.push(all.lib_data);
+        lib_data_series.push(all.extern_data);
         anon_map_series.push(all.anon_mappings);
         vdso_series.push(all.vdso);
         vvar_series.push(all.vvar);
@@ -594,9 +594,9 @@ fn graph_memory(messages: Vec<Message>, graph_faults: bool, out: PathBuf) {
     draw_series(&heap_series, "Heap");
     draw_series(&thread_stack_series, "Thread Stack");
     draw_series(&bin_text_series, "Binary Text");
-    draw_series(&lib_text_series, "Library Text");
+    draw_series(&lib_text_series, "External Text");
     draw_series(&bin_data_series, "Binary Data");
-    draw_series(&lib_data_series, "Library Data");
+    draw_series(&lib_data_series, "External Data");
     draw_series(&anon_map_series, "Anonymous Mappings");
     draw_series(&vdso_series, "VDSO");
     draw_series(&vvar_series, "Shared Kernel Vars");
