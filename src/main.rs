@@ -72,7 +72,7 @@ struct Args {
     json: bool,
 
     ///Save graph as SVG to <FILE>
-    #[arg(short, long)]
+    #[arg(short, long, value_name = "FILE")]
     graph: Option<PathBuf>,
 
     ///Graph major + minor page faults (only affects graph, not TSV or JSON)

@@ -56,7 +56,7 @@ Options:
   -i, --interval <INTERVAL>  Refresh interval in seconds [default: 1]
   -f, --fail-on-noperm       Fail if permission is denied to read a process's info. Default behavior is to skip the process and continue running
   -j, --json                 Output newline delimited JSON instead of TSV to stdout
-  -g, --graph <GRAPH>        Save graph as SVG to <FILE>
+  -g, --graph <FILE>         Save graph as SVG to <FILE>
   -m, --graph-faults         Graph major + minor page faults (only affects graph, not TSV or JSON)
   -w, --show-warnings        Print warnings to stderr
   -h, --help                 Print help
