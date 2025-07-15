@@ -338,15 +338,18 @@ fn get_aggregated(mem: &MemoryExt) -> FileCategoryTotals {
 #[derive(Debug, Clone, Serialize)]
 struct Message {
     interval: Interval,
+    all: SimpleMemory,
     procs: Vec<SimpleProcListing>,
     acc_faults: Faults,
 }
 
 impl Message {
     fn new(procs: Vec<ProcListing>, interval: Interval, acc_faults: Faults) -> Message {
+        let procs: Vec<SimpleProcListing> = procs.into_iter().map(|p| p.into()).collect();
         Message {
             interval,
-            procs: procs.into_iter().map(|p| p.into()).collect(),
+            all: procs.iter().map(|p| p.memory.clone()).sum(),
+            procs,
             acc_faults,
         }
     }
@@ -516,20 +519,20 @@ fn graph_memory(messages: Vec<Message>, graph_faults: bool, out: PathBuf) {
         }
 
         // aggregate processes
-        let mem: SimpleMemory = message.procs.into_iter().map(|p| p.memory).sum();
-        stack_series.push(mem.stack);
-        heap_series.push(mem.heap);
-        thread_stack_series.push(mem.thread_stack);
-        bin_text_series.push(mem.bin_text);
-        lib_text_series.push(mem.lib_text);
-        bin_data_series.push(mem.bin_data);
-        lib_data_series.push(mem.lib_data);
-        anon_map_series.push(mem.anon_mappings);
-        vdso_series.push(mem.vdso);
-        vvar_series.push(mem.vvar);
-        vsyscall_series.push(mem.vsyscall);
-        vsys_series.push(mem.vsys);
-        for (path, pss) in mem.other {
+        let all = message.all;
+        stack_series.push(all.stack);
+        heap_series.push(all.heap);
+        thread_stack_series.push(all.thread_stack);
+        bin_text_series.push(all.bin_text);
+        lib_text_series.push(all.lib_text);
+        bin_data_series.push(all.bin_data);
+        lib_data_series.push(all.lib_data);
+        anon_map_series.push(all.anon_mappings);
+        vdso_series.push(all.vdso);
+        vvar_series.push(all.vvar);
+        vsyscall_series.push(all.vsyscall);
+        vsys_series.push(all.vsys);
+        for (path, pss) in all.other {
             other_series
                 .entry(path)
                 .or_insert(zero_series.clone())
