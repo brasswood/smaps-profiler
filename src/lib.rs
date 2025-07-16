@@ -21,32 +21,33 @@ use procfs::ProcError::{NotFound, PermissionDenied};
 use procfs::ProcResult;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, RandomState};
+use std::hash::Hash;
 use std::iter;
 use std::ops::Add;
 use std::path::PathBuf;
 
+
 #[derive(Debug)]
-pub struct ProcNode {
+pub struct Proc {
     pub pid: i32,
     pub ppid: i32,
     pub cmdline: String,
     pub faults: Faults,
     pub process: Process,
-    pub children: Vec<usize>,
 }
+
 // I might want a new type that has all the same information as ProcNode, but also with smaps.
 // function delegation for trait impls has been proposed in rust-lang/rfcs/#3530.
 // property delegation as in Kotlin would be nice.
-impl ProcNode {
-    fn try_from_process(process: Process, convert_self: bool) -> ProcResult<Option<ProcNode>> {
+impl Proc {
+    fn try_from_process(process: Process, convert_self: bool) -> ProcResult<Option<Proc>> {
         let stat = process.stat()?;
         let pid = stat.pid;
         let me: i32 = std::process::id().try_into().unwrap();
         if !convert_self && pid == me {
             return Ok(None);
         }
-        Ok(Some(ProcNode {
+        Ok(Some(Proc {
             pid,
             ppid: stat.ppid,
             cmdline: process.cmdline()?.join(" "),
@@ -55,8 +56,22 @@ impl ProcNode {
                 major: stat.majflt,
             },
             process,
-            children: vec![],
         }))
+    }
+}
+
+#[derive(Debug)]
+struct ProcNode {
+    proc: Proc,
+    children: Vec<usize>,
+}
+
+impl From<Proc> for ProcNode {
+    fn from(proc: Proc) -> ProcNode {
+        ProcNode {
+            proc,
+            children: vec![]
+        }
     }
 }
 
@@ -341,34 +356,27 @@ pub fn get_processes(
     match_children: bool,
     match_self: bool,
     fail_on_noperm: bool,
-) -> ProcResult<Vec<ProcNode>> {
+) -> ProcResult<Vec<Proc>> {
     // https://users.rust-lang.org/t/std-id-vs-libc-pid-t-how-to-handle/78281
     let all_processes = process::all_processes()?;
-    let mut proc_tree: Vec<ProcNode> = all_processes
+    let procs: Vec<Proc> = all_processes
         .filter_map(|proc_result| {
             let result = proc_result
-                .and_then(|process| ProcNode::try_from_process(process, match_self))
+                .and_then(|process| Proc::try_from_process(process, match_self))
                 .transpose()?;
             filter_errors(result, fail_on_noperm)
         })
         .collect::<ProcResult<_>>()?;
     let Some(regex) = regex else {
-        return Ok(proc_tree);
+        return Ok(procs);
     };
-    let kv_pairs = proc_tree
-        .iter()
-        .enumerate()
-        .map(|(i, proc_node)| (proc_node.pid, i));
-    let proc_map: HashMap<_, _, RandomState> = HashMap::from_iter(kv_pairs);
-    for idx in 0..proc_tree.len() {
-        let proc_node = &proc_tree[idx];
-        if proc_node.ppid != 0 {
-            let parent_idx = proc_map
-                .get(&proc_node.ppid)
-                .unwrap_or_else(|| panic!("pid {} not found in proc_map", proc_node.ppid));
-            proc_tree[*parent_idx].children.push(idx);
-        }
+    
+    if !match_children {
+        return Ok(procs.into_iter().filter(|p| regex.is_match(&p.cmdline)).collect());
     }
+
+    let proc_tree = build_tree(procs);
+    let mut matched: HashSet<usize> = HashSet::new();
 
     fn add_process_recursive(
         matched: &mut HashSet<usize>,
@@ -382,14 +390,9 @@ pub fn get_processes(
         }
     }
 
-    let mut matched: HashSet<usize> = HashSet::new();
     for (proc_idx, proc_node) in proc_tree.iter().enumerate() {
-        if regex.is_match(&proc_node.cmdline) {
-            if match_children {
-                add_process_recursive(&mut matched, &proc_tree, proc_idx);
-            } else {
-                matched.insert(proc_idx);
-            }
+        if regex.is_match(&proc_node.proc.cmdline) {
+            add_process_recursive(&mut matched, &proc_tree, proc_idx);
         }
     }
     // Iterate through proc_tree; drop Processes that aren't matched, return ones that are.
@@ -398,7 +401,7 @@ pub fn get_processes(
         .enumerate()
         .filter_map(|(process_idx, process_node)| {
             if matched.contains(&process_idx) {
-                Some(process_node)
+                Some(process_node.proc)
             } else {
                 None
             }
@@ -407,9 +410,28 @@ pub fn get_processes(
     Ok(result)
 }
 
-pub fn get_smaps(processes: Vec<ProcNode>, fail_on_noperm: bool) -> ProcResult<Vec<ProcListing>> {
+fn build_tree(processes: Vec<Proc>) -> Vec<ProcNode> {
+    let mut pid_idx_map: HashMap<i32, usize> = HashMap::with_capacity(processes.len());
+    for (i, proc) in processes.iter().enumerate() {
+        pid_idx_map.insert(proc.pid, i);
+    }
+
+    let mut proc_tree: Vec<ProcNode> = processes.into_iter().map(|p| p.into()).collect();
+    for idx in 0..proc_tree.len() {
+        let proc_node = &proc_tree[idx];
+        if proc_node.proc.ppid != 0 {
+            let parent_idx = pid_idx_map
+                .get(&proc_node.proc.ppid)
+                .unwrap_or_else(|| panic!("pid {} not found in proc_map", proc_node.proc.ppid));
+            proc_tree[*parent_idx].children.push(idx);
+        }
+    }
+    proc_tree
+}
+
+pub fn get_smaps(processes: Vec<Proc>, fail_on_noperm: bool) -> ProcResult<Vec<ProcListing>> {
     processes.into_iter().filter_map(|proc_node| {
-        let ProcNode { pid, ppid, cmdline, process, faults, .. } = proc_node;
+        let Proc { pid, ppid, cmdline, process, faults, .. } = proc_node;
         let maps_result = filter_errors(process.smaps(), fail_on_noperm)?;
         let maps = match maps_result {
             Ok(maps) => maps,
