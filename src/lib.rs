@@ -401,11 +401,7 @@ pub fn get_processes(
         .into_iter()
         .enumerate()
         .filter_map(|(process_idx, process_node)| {
-            if matched.contains(&process_idx) {
-                Some(process_node.proc)
-            } else {
-                None
-            }
+            matched.contains(&process_idx).then_some(process_node.proc)
         })
         .collect();
     Ok(result)
