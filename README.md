@@ -1,6 +1,6 @@
 This repository includes two programs: smaps-profiler and smaps-snapshot.
 
-smaps-profiler reports stack, heap, text, data, and other categories of memory usage for a set of processes over time. It measures the Proportional Set Size (PSS) rather than the Resident Set Size (RSS) to avoid double-counting memory that is shared among processes. It sources data from the /proc/pid/smaps file for each process. It currently outputs TSV to the standard output (memory is in bytes), or it can output a graph to an SVG file (gnuplot must be installed on your system for this to work).
+smaps-profiler reports stack, heap, text, data, and other categories of memory usage for a set of processes over time. It measures the Proportional Set Size (PSS) rather than the Resident Set Size (RSS) to avoid double-counting memory that is shared among processes. It sources data from the /proc/pid/smaps file for each process. It currently outputs TSV or newline delimited JSON to the standard output (memory is in bytes). It can also output a graph to an SVG file (gnuplot must be installed on your system for this to work).
 
 smaps-snapshot gets a more detailed report of the memory usage of a set of processes at one moment in time. It includes all of the same categories as smaps-profiler, but for memory that is backed by files, it can show the memory usage for each individual file. The output is a pretty-printed table (not strictly TSV).
 
@@ -27,13 +27,25 @@ This will install the binaries `smaps-profiler` and `smaps-snapshot` in `${BASE}
 
 ### TSV:
 ```console
-$ smaps-profiler -c -f ^bash$
-PID     STACK_PSS       HEAP_PSS        THREAD_STACK_PSS        BIN_TEXT_PSS    LIB_TEXT_PSS    BIN_DATA_PSS    LIB_DATA_PSS    ANON_MAP_PSS    VDSO_PSS        VVAR_PSS        VSYSCALL_PSS    SHM_PSS OTHER_PSS       CMD
-9500    110592  1081344 0       328704  19456   110592  69632   69632   0       0       0       0       0       bash
-24070   110592  1798144 0       324608  28672   186368  129024  69632   0       0       0       0       0       bash
-105428  118784  4759552 0       3084288 156672  667648  2126848 122880  0       0       0       0       0       vim README.md
+$ smaps-profiler bash
+PID	STACK_PSS	HEAP_PSS	THREAD_STACK_PSS	BIN_TEXT_PSS	EXTERN_TEXT_PSS	BIN_DATA_PSS	EXTERN_DATA_PSS	ANON_MAP_PSS	VDSO_PSS	VVAR_PSS	VSYSCALL_PSS	SHM_PSS	OTHER_PSS	MIN_FAULTS	MAJ_FAULTS	CMD
+2805	114688	1392640	0	485376	32768	237568	123904	69632	0	00	0	0	894	1	bash
+4457	114688	1404928	0	489472	32768	212992	123904	69632	0	00	0	0	1474	0	bash
+PID	STACK_PSS	HEAP_PSS	THREAD_STACK_PSS	BIN_TEXT_PSS	EXTERN_TEXT_PSS	BIN_DATA_PSS	EXTERN_DATA_PSS	ANON_MAP_PSS	VDSO_PSS	VVAR_PSS	VSYSCALL_PSS	SHM_PSS	OTHER_PSS	MIN_FAULTS	MAJ_FAULTS	CMD
+2805	114688	1392640	0	485376	32768	237568	123904	69632	0	00	0	0	894	1	bash
+4457	114688	1404928	0	489472	32768	212992	123904	69632	0	00	0	0	1474	0	bash
+PID	STACK_PSS	HEAP_PSS	THREAD_STACK_PSS	BIN_TEXT_PSS	EXTERN_TEXT_PSS	BIN_DATA_PSS	EXTERN_DATA_PSS	ANON_MAP_PSS	VDSO_PSS	VVAR_PSS	VSYSCALL_PSS	SHM_PSS	OTHER_PSS	MIN_FAULTS	MAJ_FAULTS	CMD
+2805	114688	1392640	0	485376	32768	237568	123904	69632	0	00	0	0	894	1	bash
+4457	114688	1404928	0	489472	32768	212992	123904	69632	0	00	0	0	1474	0	bash
 ```
 
+### Newline Delimited JSON
+```console
+$ smaps-profiler -j bash
+{"interval":{"start_millis":0,"end_millis":13},"all":{"stack":229376,"heap":3395584,"thread_stack":0,"bin_text":974848,"extern_text":65536,"bin_data":450560,"extern_data":247808,"anon_mappings":139264,"vdso":0,"vvar":0,"vsyscall":0,"sysv_shm":0,"other":{}},"procs":[{"pid":2805,"ppid":2792,"cmdline":"bash","faults":{"minor":894,"major":1},"memory":{"stack":114688,"heap":1392640,"thread_stack":0,"bin_text":485376,"extern_text":32768,"bin_data":237568,"extern_data":123904,"anon_mappings":69632,"vdso":0,"vvar":0,"vsyscall":0,"sysv_shm":0,"other":{}}},{"pid":4457,"ppid":2792,"cmdline":"bash","faults":{"minor":1740,"major":0},"memory":{"stack":114688,"heap":2002944,"thread_stack":0,"bin_text":489472,"extern_text":32768,"bin_data":212992,"extern_data":123904,"anon_mappings":69632,"vdso":0,"vvar":0,"vsyscall":0,"sysv_shm":0,"other":{}}}],"acc_faults":{"minor":2634,"major":1}}
+{"interval":{"start_millis":1000,"end_millis":1016},"all":{"stack":229376,"heap":3395584,"thread_stack":0,"bin_text":974848,"extern_text":65536,"bin_data":450560,"extern_data":247808,"anon_mappings":139264,"vdso":0,"vvar":0,"vsyscall":0,"sysv_shm":0,"other":{}},"procs":[{"pid":2805,"ppid":2792,"cmdline":"bash","faults":{"minor":894,"major":1},"memory":{"stack":114688,"heap":1392640,"thread_stack":0,"bin_text":485376,"extern_text":32768,"bin_data":237568,"extern_data":123904,"anon_mappings":69632,"vdso":0,"vvar":0,"vsyscall":0,"sysv_shm":0,"other":{}}},{"pid":4457,"ppid":2792,"cmdline":"bash","faults":{"minor":1740,"major":0},"memory":{"stack":114688,"heap":2002944,"thread_stack":0,"bin_text":489472,"extern_text":32768,"bin_data":212992,"extern_data":123904,"anon_mappings":69632,"vdso":0,"vvar":0,"vsyscall":0,"sysv_shm":0,"other":{}}}],"acc_faults":{"minor":2634,"major":1}}
+{"interval":{"start_millis":2000,"end_millis":2036},"all":{"stack":229376,"heap":3395584,"thread_stack":0,"bin_text":974848,"extern_text":65536,"bin_data":450560,"extern_data":247808,"anon_mappings":139264,"vdso":0,"vvar":0,"vsyscall":0,"sysv_shm":0,"other":{}},"procs":[{"pid":2805,"ppid":2792,"cmdline":"bash","faults":{"minor":894,"major":1},"memory":{"stack":114688,"heap":1392640,"thread_stack":0,"bin_text":485376,"extern_text":32768,"bin_data":237568,"extern_data":123904,"anon_mappings":69632,"vdso":0,"vvar":0,"vsyscall":0,"sysv_shm":0,"other":{}}},{"pid":4457,"ppid":2792,"cmdline":"bash","faults":{"minor":1740,"major":0},"memory":{"stack":114688,"heap":2002944,"thread_stack":0,"bin_text":489472,"extern_text":32768,"bin_data":212992,"extern_data":123904,"anon_mappings":69632,"vdso":0,"vvar":0,"vsyscall":0,"sysv_shm":0,"other":{}}}],"acc_faults":{"minor":2634,"major":1}}
+```
 ### Graph (requires gnuplot on your system):
 ```console
 $ smaps-profiler -c -f -g example-chromium.svg chromium
