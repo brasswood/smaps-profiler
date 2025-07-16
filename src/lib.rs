@@ -430,8 +430,8 @@ fn build_tree(processes: Vec<Proc>) -> Vec<ProcNode> {
 }
 
 pub fn get_smaps(processes: Vec<Proc>, fail_on_noperm: bool) -> ProcResult<Vec<ProcListing>> {
-    processes.into_iter().filter_map(|proc_node| {
-        let Proc { pid, ppid, cmdline, process, faults, .. } = proc_node;
+    processes.into_iter().filter_map(|proc| {
+        let Proc { pid, ppid, cmdline, process, faults, .. } = proc;
         let maps_result = filter_errors(process.smaps(), fail_on_noperm)?;
         let maps = match maps_result {
             Ok(maps) => maps,
