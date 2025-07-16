@@ -26,7 +26,6 @@ use std::iter;
 use std::ops::Add;
 use std::path::PathBuf;
 
-
 #[derive(Debug)]
 pub struct Proc {
     pub pid: i32,
@@ -70,7 +69,7 @@ impl From<Proc> for ProcNode {
     fn from(proc: Proc) -> ProcNode {
         ProcNode {
             proc,
-            children: vec![]
+            children: vec![],
         }
     }
 }
@@ -370,9 +369,12 @@ pub fn get_processes(
     let Some(regex) = regex else {
         return Ok(procs);
     };
-    
+
     if !match_children {
-        return Ok(procs.into_iter().filter(|p| regex.is_match(&p.cmdline)).collect());
+        return Ok(procs
+            .into_iter()
+            .filter(|p| regex.is_match(&p.cmdline))
+            .collect());
     }
 
     let proc_tree = build_tree(procs);
