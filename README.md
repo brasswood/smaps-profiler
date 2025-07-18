@@ -302,3 +302,7 @@ Options:
   -h, --help             Print help
   -V, --version          Print version
 ```
+
+# Other Platforms
+
+These tools are Linux-only because they rely on the `/proc/pid/smaps` file. [VMMap](https://learn.microsoft.com/en-us/sysinternals/downloads/vmmap) is a very useful tool for Windows that measures essentially the same thing. Its usage is documented in [this video](https://learn.microsoft.com/en-us/shows/defrag-tools/7-vmmap). For macOS, [this blog post](https://jvns.ca/blog/2018/01/26/mac-memory-maps/) by Julia Evans may have useful information.
